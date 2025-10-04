@@ -1,6 +1,10 @@
 ---
-description: List project todos (project, gitignored)
+description: List project todos, optionally filtered by category (project, gitignored)
 tools: [mcp__todo-list__list_todos]
+args:
+  - name: category
+    description: Optional category to filter by
+    required: false
 ---
 
-Show me the project todo list.
+IMPORTANT: Call mcp__todo-list__list_todos with no preamble. If a category argument is provided, pass it as the category parameter to filter results. Do not explain or provide commentary - just execute the tool and show the output.

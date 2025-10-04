@@ -6,7 +6,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { readTodos, writeTodos, formatTodoList } from "./lib.js";
+import { formatTodoList, addTodo, removeTodo, clearTodos } from "./lib.js";
 
 const server = new Server(
   {
@@ -58,7 +58,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description: "List all items in the project to-do list",
         inputSchema: {
           type: "object",
-          properties: {},
+          properties: {
+            category: {
+              type: "string",
+              description: "Optional: filter todos by category tag",
+            },
+          },
         },
       },
       {
@@ -78,65 +83,65 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   switch (name) {
     case "add_todo": {
-      const todos = await readTodos();
-      todos.push({
-        task: args.task,
-        added: new Date().toISOString(),
-      });
-      await writeTodos(todos);
+      const { todos, added } = await addTodo(args.task);
+
+      const displayText = added.category
+        ? `Added to-do [${added.category}]: "${added.task}"\nTotal items: ${todos.length}`
+        : `Added to-do: "${added.task}"\nTotal items: ${todos.length}`;
+
       return {
         content: [
           {
             type: "text",
-            text: `Added to-do: "${args.task}"\nTotal items: ${todos.length}`,
+            text: displayText,
           },
         ],
       };
     }
 
     case "remove_todo": {
-      const todos = await readTodos();
-      const index = args.index - 1;
-
-      if (index < 0 || index >= todos.length) {
+      try {
+        const { todos, removed } = await removeTodo(args.index);
         return {
           content: [
             {
               type: "text",
-              text: `Error: Invalid index ${args.index}. Valid range: 1-${todos.length}`,
+              text: `Removed to-do: "${removed.task}"\nRemaining items: ${todos.length}`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error: ${error.message}`,
             },
           ],
           isError: true,
         };
       }
-
-      const removed = todos.splice(index, 1)[0];
-      await writeTodos(todos);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Removed to-do: "${removed.task}"\nRemaining items: ${todos.length}`,
-          },
-        ],
-      };
     }
 
     case "list_todos": {
+      const { readTodos } = await import("./lib.js");
       const todos = await readTodos();
+      const category = args?.category;
+      const filteredTodos = category
+        ? todos.filter((t) => t.category === category)
+        : todos;
       return {
         content: [
           {
             type: "text",
-            text: formatTodoList(todos),
+            text: formatTodoList(filteredTodos, category),
           },
         ],
       };
     }
 
     case "clear_todos": {
-      const previousCount = (await readTodos()).length;
-      await writeTodos([]);
+      const previousCount = await clearTodos();
       return {
         content: [
           {

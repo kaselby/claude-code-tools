@@ -1,7 +1,9 @@
 ---
 argument-hint: [task]
 description: Add a task to the project todo list (project, gitignored)
-tools: [mcp__todo-list__add_todo]
+allowed-tools: Bash(node:*)
 ---
 
-Add "$ARGUMENTS" to the project todo list.
+Add a new task to the project to-do list.
+
+!`node "/Users/kaselby/Git/claude-code-tools/mcp-tools/todo-list/cli.js" add "$ARGUMENTS"`

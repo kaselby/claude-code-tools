@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readTodos, writeTodos, formatTodoList } from "./lib.js";
+import { readTodos, formatTodoList, addTodo, removeTodo, clearTodos } from "./lib.js";
 
 const command = process.argv[2];
 const args = process.argv.slice(3);
@@ -10,25 +10,27 @@ async function main() {
     switch (command) {
       case "list": {
         const todos = await readTodos();
-        console.log(formatTodoList(todos));
+        const category = args[0]; // Optional category filter
+        const filteredTodos = category
+          ? todos.filter((t) => t.category === category)
+          : todos;
+        console.log(formatTodoList(filteredTodos, category));
         break;
       }
 
       case "add": {
-        const task = args.join(" ");
-        if (!task) {
+        const taskString = args.join(" ");
+        if (!taskString) {
           console.error("Error: Please provide a task to add");
           process.exit(1);
         }
 
-        const todos = await readTodos();
-        todos.push({
-          task,
-          added: new Date().toISOString(),
-        });
-        await writeTodos(todos);
+        const { todos, added } = await addTodo(taskString);
 
-        console.log(`✓ Added: "${task}"`);
+        const displayText = added.category
+          ? `✓ Added [${added.category}]: "${added.task}"`
+          : `✓ Added: "${added.task}"`;
+        console.log(displayText);
         console.log(formatTodoList(todos));
         break;
       }
@@ -40,25 +42,20 @@ async function main() {
           process.exit(1);
         }
 
-        const todos = await readTodos();
-        const arrayIndex = index - 1;
-
-        if (arrayIndex >= todos.length) {
-          console.error(`Error: Task #${index} does not exist`);
+        try {
+          const { todos, removed } = await removeTodo(index);
+          console.log(`✓ Removed: "${removed.task}"`);
+          console.log(formatTodoList(todos));
+        } catch (error) {
+          console.error(`Error: ${error.message}`);
           process.exit(1);
         }
-
-        const removed = todos.splice(arrayIndex, 1)[0];
-        await writeTodos(todos);
-
-        console.log(`✓ Removed: "${removed.task}"`);
-        console.log(formatTodoList(todos));
         break;
       }
 
       case "clear": {
-        await writeTodos([]);
-        console.log("✓ All todos cleared");
+        const count = await clearTodos();
+        console.log(`✓ All todos cleared (${count} items removed)`);
         console.log(formatTodoList([]));
         break;
       }
@@ -66,10 +63,10 @@ async function main() {
       default:
         console.error(`Unknown command: ${command}`);
         console.error("\nUsage:");
-        console.error("  cli.js list           - Show todos");
-        console.error("  cli.js add <task>     - Add a task");
-        console.error("  cli.js remove <index> - Remove a task");
-        console.error("  cli.js clear          - Clear all tasks");
+        console.error("  cli.js list [category]    - Show todos (optionally filtered by category)");
+        console.error("  cli.js add <task>         - Add a task (use 'category::task' for tagged tasks)");
+        console.error("  cli.js remove <index>     - Remove a task");
+        console.error("  cli.js clear              - Clear all tasks");
         process.exit(1);
     }
   } catch (error) {

@@ -1,7 +1,9 @@
 ---
 argument-hint: [index]
 description: Remove a task from the project todo list (project, gitignored)
-tools: [mcp__todo-list__remove_todo]
+allowed-tools: Bash(node:*)
 ---
 
-Remove todo #$ARGUMENTS from the project todo list.
+Remove a task from the project to-do list by its number.
+
+!`node "/Users/kaselby/Git/claude-code-tools/mcp-tools/todo-list/cli.js" remove $ARGUMENTS`
