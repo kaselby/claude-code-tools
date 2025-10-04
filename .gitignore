@@ -2,3 +2,6 @@ node_modules/
 .env
 .DS_Store
 *.log
+.project-todos.json
+.claude/commands/
+mcp-tools/todo-list/node_modules

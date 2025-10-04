@@ -6,38 +6,12 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import fs from "fs/promises";
-import path from "path";
-
-const TODO_FILE = ".project-todos.json";
-
-async function getTodoFilePath() {
-  const cwd = process.cwd();
-  return path.join(cwd, TODO_FILE);
-}
-
-async function readTodos() {
-  try {
-    const filePath = await getTodoFilePath();
-    const data = await fs.readFile(filePath, "utf-8");
-    return JSON.parse(data);
-  } catch (error) {
-    if (error.code === "ENOENT") {
-      return [];
-    }
-    throw error;
-  }
-}
-
-async function writeTodos(todos) {
-  const filePath = await getTodoFilePath();
-  await fs.writeFile(filePath, JSON.stringify(todos, null, 2), "utf-8");
-}
+import { readTodos, writeTodos, formatTodoList } from "./lib.js";
 
 const server = new Server(
   {
     name: "mcp-todo-list",
-    version: "1.0.0",
+    version: "2.0.0",
   },
   {
     capabilities: {
@@ -51,7 +25,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "add_todo",
-        description: "Add a new item to the project to-do list. Stay close to the user's wording - you can clean up loose shorthand but don't add extra details or significantly change what they said.",
+        description:
+          "Add a new item to the project to-do list. Stay close to the user's wording - you can clean up loose shorthand but don't add extra details or significantly change what they said.",
         inputSchema: {
           type: "object",
           properties: {
@@ -65,7 +40,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "remove_todo",
-        description: "Remove an item from the project to-do list by index (1-based)",
+        description:
+          "Remove an item from the project to-do list by index (1-based)",
         inputSchema: {
           type: "object",
           properties: {
@@ -80,6 +56,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "list_todos",
         description: "List all items in the project to-do list",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "clear_todos",
+        description: "Clear all items from the project to-do list",
         inputSchema: {
           type: "object",
           properties: {},
@@ -140,27 +124,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     case "list_todos": {
       const todos = await readTodos();
-
-      if (todos.length === 0) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: "No items in the to-do list.",
-            },
-          ],
-        };
-      }
-
-      const list = todos
-        .map((todo, i) => `${i + 1}. ${todo.task}`)
-        .join("\n");
-
       return {
         content: [
           {
             type: "text",
-            text: `Project To-Do List (${todos.length} items):\n\n${list}`,
+            text: formatTodoList(todos),
+          },
+        ],
+      };
+    }
+
+    case "clear_todos": {
+      const previousCount = (await readTodos()).length;
+      await writeTodos([]);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Cleared all to-dos (${previousCount} items removed)`,
           },
         ],
       };

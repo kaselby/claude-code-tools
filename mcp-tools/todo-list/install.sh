@@ -12,38 +12,28 @@ echo "Installing dependencies..."
 cd "$SCRIPT_DIR"
 npm install
 
-# Path to Claude Code config
-CONFIG_FILE="$HOME/.claude/config.json"
-
-# Create config directory if it doesn't exist
-mkdir -p "$HOME/.claude"
-
-# Check if config file exists
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "Creating new config file..."
-    echo '{"mcpServers":{}}' > "$CONFIG_FILE"
-fi
-
-# Read existing config
-CONFIG_CONTENT=$(cat "$CONFIG_FILE")
-
-# Check if mcpServers exists
-if ! echo "$CONFIG_CONTENT" | grep -q '"mcpServers"'; then
-    echo "Adding mcpServers section to config..."
-    CONFIG_CONTENT=$(echo "$CONFIG_CONTENT" | jq '. + {mcpServers: {}}')
-fi
-
-# Add todo-list server configuration
+# Add or update MCP server using Claude CLI
 echo "Adding todo-list to MCP servers..."
-CONFIG_CONTENT=$(echo "$CONFIG_CONTENT" | jq \
-    --arg path "$SCRIPT_DIR/index.js" \
-    '.mcpServers["todo-list"] = {command: "node", args: [$path]}')
+if claude mcp add --scope user todo-list node "$SCRIPT_DIR/index.js" 2>&1 | grep -q "already exists"; then
+  echo "MCP server already exists, updating configuration..."
+  claude mcp remove --scope user todo-list 2>/dev/null || true
+  claude mcp add --scope user todo-list node "$SCRIPT_DIR/index.js"
+fi
 
-# Write updated config
-echo "$CONFIG_CONTENT" | jq '.' > "$CONFIG_FILE"
+# Install slash commands
+echo "Installing slash commands..."
+CLAUDE_DIR="$HOME/.claude/commands"
+mkdir -p "$CLAUDE_DIR"
+
+# Copy slash command definitions
+cp "$SCRIPT_DIR/commands/todo-add.md" "$CLAUDE_DIR/"
+cp "$SCRIPT_DIR/commands/todo-list.md" "$CLAUDE_DIR/"
+cp "$SCRIPT_DIR/commands/todo-remove.md" "$CLAUDE_DIR/"
+cp "$SCRIPT_DIR/commands/todo-clear.md" "$CLAUDE_DIR/"
 
 echo ""
 echo "✓ Installation complete!"
 echo ""
 echo "The MCP To-Do List tool has been added to your Claude Code configuration."
+echo "Slash commands installed: /todo-add, /todo-list, /todo-remove, /todo-clear"
 echo "Restart Claude Code to start using it."

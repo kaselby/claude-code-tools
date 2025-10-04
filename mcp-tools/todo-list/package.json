@@ -1,12 +1,13 @@
 {
   "name": "mcp-todo-list",
-  "version": "1.0.0",
-  "description": "Simple to-do list MCP server for project-local task tracking",
+  "version": "2.0.0",
+  "description": "Project todo list with MCP tools and CLI for Claude Code",
   "type": "module",
   "bin": {
     "mcp-todo-list": "./index.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.4"
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "boxen": "^8.0.1"
   }
 }
