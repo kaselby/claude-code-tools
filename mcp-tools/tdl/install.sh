@@ -38,42 +38,49 @@ cp "$SCRIPT_DIR/commands/tdl-clear.md" "$CLAUDE_DIR/"
 echo "Checking tool approval configuration..."
 CONFIG_FILE="$HOME/.claude/config.json"
 
-if [ -f "$CONFIG_FILE" ]; then
-  # Check if jq is available
-  if ! command -v jq &> /dev/null; then
-    echo "Warning: jq is not installed. Skipping auto-approval configuration."
-    echo "You can manually add 'mcp__tdl__*' to toolApprovalConfig.autoApprove in $CONFIG_FILE"
-  else
-    # Check if auto-approval is already configured
-    AUTO_APPROVE_SET=$(jq -e '.toolApprovalConfig.autoApprove // [] | any(. == "mcp__tdl__*")' "$CONFIG_FILE" 2>/dev/null || echo "false")
-
-    if [ "$AUTO_APPROVE_SET" = "false" ]; then
-      echo ""
-      read -p "Do you want to auto-approve tdl MCP tools (recommended)? [Y/n] " -n 1 -r
-      echo ""
-
-      if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
-        echo "Configuring auto-approval for tdl tools..."
-
-        # Create backup
-        cp "$CONFIG_FILE" "$CONFIG_FILE.backup"
-
-        # Add auto-approval configuration
-        jq '.toolApprovalConfig.autoApprove |= (. // []) + ["mcp__tdl__*"] | .toolApprovalConfig.autoApprove |= unique' "$CONFIG_FILE" > "$CONFIG_FILE.tmp"
-        mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
-
-        echo "✓ Auto-approval configured for tdl tools"
-      else
-        echo "Skipping auto-approval configuration."
-        echo "You can manually add 'mcp__tdl__*' to toolApprovalConfig.autoApprove in $CONFIG_FILE"
-      fi
-    else
-      echo "✓ Auto-approval already configured for tdl tools"
-    fi
-  fi
+# Check if jq is available
+if ! command -v jq &> /dev/null; then
+  echo "Warning: jq is not installed. Skipping auto-approval configuration."
+  echo "You can manually add 'mcp__tdl__*' to toolApprovalConfig.autoApprove in $CONFIG_FILE"
 else
-  echo "Note: Claude Code config file not found at $CONFIG_FILE"
-  echo "Auto-approval will need to be configured manually after first run."
+  # Check if auto-approval is already configured (if file exists)
+  if [ -f "$CONFIG_FILE" ]; then
+    AUTO_APPROVE_SET=$(jq -e '.toolApprovalConfig.autoApprove // [] | any(. == "mcp__tdl__*")' "$CONFIG_FILE" 2>/dev/null || echo "false")
+  else
+    AUTO_APPROVE_SET="false"
+  fi
+
+  if [ "$AUTO_APPROVE_SET" = "false" ]; then
+    echo ""
+    read -p "Do you want to auto-approve tdl MCP tools (recommended)? [Y/n] " -n 1 -r
+    echo ""
+
+    if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+      echo "Configuring auto-approval for tdl tools..."
+
+      # Create .claude directory if it doesn't exist
+      mkdir -p "$HOME/.claude"
+
+      # Create config file if it doesn't exist
+      if [ ! -f "$CONFIG_FILE" ]; then
+        echo '{}' > "$CONFIG_FILE"
+      else
+        # Create backup if file exists
+        cp "$CONFIG_FILE" "$CONFIG_FILE.backup"
+      fi
+
+      # Add auto-approval configuration
+      jq '.toolApprovalConfig.autoApprove |= (. // []) + ["mcp__tdl__*"] | .toolApprovalConfig.autoApprove |= unique' "$CONFIG_FILE" > "$CONFIG_FILE.tmp"
+      mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+
+      echo "✓ Auto-approval configured for tdl tools"
+    else
+      echo "Skipping auto-approval configuration."
+      echo "You can manually add 'mcp__tdl__*' to toolApprovalConfig.autoApprove in $CONFIG_FILE"
+    fi
+  else
+    echo "✓ Auto-approval already configured for tdl tools"
+  fi
 fi
 
 # Offer to add proactive usage instructions to global CLAUDE.md
