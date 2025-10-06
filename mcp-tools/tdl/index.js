@@ -10,6 +10,7 @@ import {
   formatTodoList,
   addTodo,
   removeTodo,
+  completeTodo,
   clearTodos,
   filterTodos,
   getCategories,
@@ -17,11 +18,13 @@ import {
   updateTodo,
   bulkUpdate,
   bulkDelete,
+  queryHistory,
+  restoreTodo,
 } from "./lib.js";
 
 const server = new Server(
   {
-    name: "mcp-todo-list",
+    name: "mcp-tdl",
     version: "2.0.0",
   },
   {
@@ -50,9 +53,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "query_todos",
+        name: "get_todos",
         description:
-          "Query and filter todos with flexible criteria. Use this instead of list_todos for advanced filtering.",
+          "Get raw todo data for Claude to inspect silently. Returns JSON array of todos with optional filtering. Use this when you need to check if tasks exist or query the list without displaying to the user.",
         inputSchema: {
           type: "object",
           properties: {
@@ -75,6 +78,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             searchText: {
               type: "string",
               description: "Filter todos containing this text (case-insensitive search)",
+            },
+          },
+        },
+      },
+      {
+        name: "display_todos",
+        description:
+          "Display a formatted, pretty-printed todo list to the user. Use this after modifications to show the updated list, or when the user asks to see their todos.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            category: {
+              type: "string",
+              description: "Filter by specific category tag",
+            },
+            untagged: {
+              type: "boolean",
+              description: "Filter for todos without a category (true/false)",
             },
           },
         },
@@ -165,13 +186,52 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "remove_todo",
         description:
-          "Remove a single todo by index (1-based). For bulk operations, use bulk_delete instead.",
+          "Remove a single todo by index (1-based). Permanently deletes without saving to history. For bulk operations, use bulk_delete instead.",
         inputSchema: {
           type: "object",
           properties: {
             index: {
               type: "number",
               description: "The 1-based index of the task to remove",
+            },
+          },
+          required: ["index"],
+        },
+      },
+      {
+        name: "complete_todo",
+        description:
+          "Mark a todo as complete by index (1-based). Moves it to history where it can be viewed today and restored if needed. History clears automatically at midnight.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            index: {
+              type: "number",
+              description: "The 1-based index of the task to complete",
+            },
+          },
+          required: ["index"],
+        },
+      },
+      {
+        name: "query_history",
+        description:
+          "Query completed todos from today. History automatically clears at midnight each day.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "restore_todo",
+        description:
+          "Restore a completed todo from history back to the active list. Use the index from query_history results.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            index: {
+              type: "number",
+              description: "The 1-based index from the history list",
             },
           },
           required: ["index"],
@@ -205,13 +265,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case "query_todos": {
+      case "get_todos": {
+        // Return raw JSON data without formatting
         const filteredTodos = await filterTodos(args || {});
-        const filterDesc = args
-          ? Object.entries(args)
-              .map(([k, v]) => `${k}: ${v}`)
-              .join(", ")
-          : "none";
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(filteredTodos, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "display_todos": {
+        // Include original indices when filtering so displayed numbers match actual indices
+        const filteredTodos = await filterTodos({ ...args, includeIndices: true });
+        const history = await queryHistory();
 
         return {
           content: [
@@ -219,7 +290,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               type: "text",
               text: formatTodoList(
                 filteredTodos,
-                args?.category || (args?.untagged ? "untagged" : null)
+                args?.category || (args?.untagged ? "untagged" : null),
+                history
               ),
             },
           ],
@@ -300,7 +372,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "remove_todo": {
-        const { todos, removed } = await removeTodo(args.index);
+        const { todos, removed} = await removeTodo(args.index);
         return {
           content: [
             {
@@ -308,6 +380,57 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               text: `Removed to-do: "${removed.task}"\nRemaining items: ${todos.length}`,
             },
           ],
+        };
+      }
+
+      case "complete_todo": {
+        const { todos, completed } = await completeTodo(args.index);
+        const displayText = completed.category
+          ? `✓ Completed [${completed.category}]: "${completed.task}"\nRemaining items: ${todos.length}`
+          : `✓ Completed: "${completed.task}"\nRemaining items: ${todos.length}`;
+        return {
+          content: [{ type: "text", text: displayText }],
+        };
+      }
+
+      case "query_history": {
+        const history = await queryHistory();
+        if (history.length === 0) {
+          return {
+            content: [
+              { type: "text", text: "No completed todos today." },
+            ],
+          };
+        }
+
+        const historyText = history
+          .map((t, i) => {
+            const cat = t.category ? `[${t.category}${t.subcategory ? `/${t.subcategory}` : ''}] ` : '';
+            const time = new Date(t.completedAt).toLocaleTimeString('en-US', {
+              hour: '2-digit',
+              minute: '2-digit'
+            });
+            return `${i + 1}. ${cat}${t.task}\n   Completed: ${time}`;
+          })
+          .join('\n\n');
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `✓ Completed Today (${history.length}):\n\n${historyText}`,
+            },
+          ],
+        };
+      }
+
+      case "restore_todo": {
+        const { todos, restored } = await restoreTodo(args.index);
+        const displayText = restored.category
+          ? `Restored [${restored.category}]: "${restored.task}"\nActive items: ${todos.length}`
+          : `Restored: "${restored.task}"\nActive items: ${todos.length}`;
+        return {
+          content: [{ type: "text", text: displayText }],
         };
       }
 

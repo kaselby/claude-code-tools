@@ -3,5 +3,7 @@ node_modules/
 .DS_Store
 *.log
 .project-todos.json
+.project-todos-history.json
 .claude/commands/
 mcp-tools/todo-list/node_modules
+mcp-tools/tdl/node_modules
