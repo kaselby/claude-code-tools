@@ -1,23 +1,39 @@
 import fs from "fs/promises";
 import path from "path";
 import boxen from "boxen";
-import { getColorProfile } from "./config.js";
+import { getColorProfile, getScope, CONFIG_DIR } from "./config.js";
 
 const TODO_FILE = ".project-todos.json";
 const HISTORY_FILE = ".project-todos-history.json";
+const GLOBAL_TODO_FILE = ".global-todos.json";
+const GLOBAL_HISTORY_FILE = ".global-todos-history.json";
 
 /**
- * Get the path to the todo file in the current working directory
+ * Get the path to the todo file based on current scope
  */
 export async function getTodoFilePath() {
+  const scope = await getScope();
+
+  if (scope === "global") {
+    return path.join(CONFIG_DIR, GLOBAL_TODO_FILE);
+  }
+
+  // Default: project scope
   const cwd = process.cwd();
   return path.join(cwd, TODO_FILE);
 }
 
 /**
- * Get the path to the history file in the current working directory
+ * Get the path to the history file based on current scope
  */
 export async function getHistoryFilePath() {
+  const scope = await getScope();
+
+  if (scope === "global") {
+    return path.join(CONFIG_DIR, GLOBAL_HISTORY_FILE);
+  }
+
+  // Default: project scope
   const cwd = process.cwd();
   return path.join(cwd, HISTORY_FILE);
 }
@@ -45,6 +61,11 @@ export async function readTodos() {
  */
 export async function writeTodos(todos) {
   const filePath = await getTodoFilePath();
+
+  // Ensure parent directory exists (important for global scope)
+  const dir = path.dirname(filePath);
+  await fs.mkdir(dir, { recursive: true });
+
   await fs.writeFile(filePath, JSON.stringify(todos, null, 2), "utf-8");
 }
 
@@ -71,6 +92,11 @@ export async function readHistory() {
  */
 export async function writeHistory(history) {
   const filePath = await getHistoryFilePath();
+
+  // Ensure parent directory exists (important for global scope)
+  const dir = path.dirname(filePath);
+  await fs.mkdir(dir, { recursive: true });
+
   await fs.writeFile(filePath, JSON.stringify(history, null, 2), "utf-8");
 }
 
@@ -558,8 +584,10 @@ function groupTodosByCategory(todos) {
  * @returns {Promise<string>} Formatted box with todos
  */
 export async function formatTodoList(todos, categoryFilter = null, completed = null) {
-  // Load color profile from config
+  // Load color profile and scope from config
   const colors = await getColorProfile();
+  const scope = await getScope();
+  const scopeLabel = scope === "global" ? "Global" : "Project";
 
   // Use fixed width that works well across different terminal sizes
   const boxWidth = 45;
@@ -613,7 +641,7 @@ export async function formatTodoList(todos, categoryFilter = null, completed = n
   const todoCount = todos.length > 0 ? `(${todos.length})` : "";
 
   const box = boxen(content, {
-    title: `${colors.title}📋 Project To-Dos ${todoCount}${titleSuffix}\x1b[0m`,
+    title: `${colors.title}📋 ${scopeLabel} To-Dos ${todoCount}${titleSuffix}\x1b[0m`,
     titleAlignment: "left",
     padding: 1,
     margin: 0,

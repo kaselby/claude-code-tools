@@ -2,7 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 
-const CONFIG_DIR = path.join(os.homedir(), ".tdl");
+export const CONFIG_DIR = path.join(os.homedir(), ".tdl");
 const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 
 /**
