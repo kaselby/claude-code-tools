@@ -1,11 +1,11 @@
 ---
 argument-hint: [task]
 description: Add a task to the project TDL (project, gitignored)
-allowed-tools: Bash(node:*)
+tools: [mcp__tdl__add_todo]
 ---
 
 /t
 
 Add a new task to the project TDL.
 
-!`node "/Users/kaselby/Git/claude-code-tools/mcp-tools/tdl/cli.js" add "$ARGUMENTS"`
+IMPORTANT: Call mcp__tdl__add_todo with the task provided. No preamble.

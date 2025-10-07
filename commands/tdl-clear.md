@@ -1,10 +1,10 @@
 ---
 description: Clear all todos from the project TDL (project, gitignored)
-allowed-tools: Bash(node:*)
+tools: [mcp__tdl__clear_todos]
 ---
 
 /t
 
 Clear all tasks from the project TDL.
 
-!`node "/Users/kaselby/Git/claude-code-tools/mcp-tools/tdl/cli.js" clear`
+IMPORTANT: Call mcp__tdl__clear_todos. No preamble.

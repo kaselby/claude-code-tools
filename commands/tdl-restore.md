@@ -1,7 +1,7 @@
 ---
 argument-hint: [index]
 description: Restore a completed task from history (project, gitignored)
-allowed-tools: mcp__tdl__restore_todo
+tools: [mcp__tdl__restore_todo]
 ---
 
 /t

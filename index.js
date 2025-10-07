@@ -21,6 +21,12 @@ import {
   queryHistory,
   restoreTodo,
 } from "./lib.js";
+import {
+  readConfig,
+  setColorProfile,
+  setScope,
+  COLOR_PROFILES,
+} from "./config.js";
 
 const server = new Server(
   {
@@ -245,6 +251,44 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {},
         },
       },
+      {
+        name: "get_config",
+        description: "Get current TDL configuration (color profile and scope setting)",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "set_color_profile",
+        description: "Set the color profile for todo list display. Available profiles: default, ocean, forest, sunset, purple, monochrome",
+        inputSchema: {
+          type: "object",
+          properties: {
+            profile: {
+              type: "string",
+              enum: ["default", "ocean", "forest", "sunset", "purple", "monochrome"],
+              description: "Color profile name",
+            },
+          },
+          required: ["profile"],
+        },
+      },
+      {
+        name: "set_scope",
+        description: "Set the scope for todo tracking. 'project' stores todos in current directory (project-specific). 'global' stores todos in ~/.tdl/ (shared across all projects).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            scope: {
+              type: "string",
+              enum: ["project", "global"],
+              description: "Scope setting",
+            },
+          },
+          required: ["scope"],
+        },
+      },
     ],
   };
 });
@@ -441,6 +485,52 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             {
               type: "text",
               text: `Cleared all to-dos (${previousCount} items removed)`,
+            },
+          ],
+        };
+      }
+
+      case "get_config": {
+        const config = await readConfig();
+        const profiles = Object.keys(COLOR_PROFILES).map(name => ({
+          name,
+          description: COLOR_PROFILES[name].name,
+          current: name === config.colorProfile
+        }));
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                colorProfile: config.colorProfile,
+                scope: config.scope,
+                availableProfiles: profiles
+              }, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "set_color_profile": {
+        await setColorProfile(args.profile);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `✓ Color profile set to: ${args.profile}`,
+            },
+          ],
+        };
+      }
+
+      case "set_scope": {
+        await setScope(args.scope);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `✓ Scope set to: ${args.scope}\n${args.scope === 'global' ? 'Todos are now shared across all projects in ~/.tdl/' : 'Todos are now project-specific in current directory'}`,
             },
           ],
         };
