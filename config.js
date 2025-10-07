@@ -6,6 +6,12 @@ export const CONFIG_DIR = path.join(os.homedir(), ".tdl");
 const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 
 /**
+ * Maximum category depth (all todos support up to 3 levels)
+ * Can be increased in the future if needed
+ */
+export const MAX_CATEGORY_DEPTH = 3;
+
+/**
  * Color profiles with aesthetically pleasing combinations
  */
 export const COLOR_PROFILES = {
@@ -100,7 +106,7 @@ export const COLOR_PROFILES = {
  */
 const DEFAULT_CONFIG = {
   colorProfile: "default",
-  scope: "project", // "project" or "global"
+  scope: "project", // "project" or "global" - controls which todos are DISPLAYED (filter, not storage)
 };
 
 /**
@@ -207,15 +213,18 @@ export async function getScope() {
 
 /**
  * Set the scope setting
- * @param {string} scope - "project" or "global"
+ * @param {string} scope - "project", "global", "local" (alias for "project")
  * @throws {Error} If scope is invalid
  */
 export async function setScope(scope) {
-  if (scope !== "project" && scope !== "global") {
-    throw new Error(`Invalid scope "${scope}". Must be "project" or "global"`);
+  // Allow "local" as alias for "project" for API consistency
+  const normalizedScope = scope === "local" ? "project" : scope;
+
+  if (normalizedScope !== "project" && normalizedScope !== "global") {
+    throw new Error(`Invalid scope "${scope}". Must be "project", "local", or "global"`);
   }
 
   const config = await readConfig();
-  config.scope = scope;
+  config.scope = normalizedScope;
   await writeConfig(config);
 }

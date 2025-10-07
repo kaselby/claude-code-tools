@@ -6,7 +6,7 @@ These instructions can be automatically added to your global `~/.claude/CLAUDE.m
 
 ---
 
-<!-- TDL_PROACTIVE_USAGE_START:v0.1.0 -->
+<!-- TDL_PROACTIVE_USAGE_START:v0.1.1 -->
 ## Proactive TDL Usage Guidelines
 
 Claude should automatically use TDL tools according to these rules:
@@ -24,7 +24,7 @@ Claude should automatically use TDL tools according to these rules:
 
 ### Adding Tasks for Long-Term Work
 
-**When starting work on a medium-to-long term task, proactively add it to the TDL with appropriate categorization:**
+**CRITICAL: When starting work on ANY medium-to-long term task, you MUST proactively add it to the TDL, even if you're also using TodoWrite for short-term tracking:**
 
 **Category Format:** `project_name/feature::task description`
 - **Category:** The overall project or repository name
@@ -41,13 +41,25 @@ Claude should automatically use TDL tools according to these rules:
 
 **Examples:**
 - User: "Let's implement user authentication for the API"
-  → Add: `api_project/auth::Implement user authentication system`
+  → **MUST** add: `api_project/auth::Implement user authentication system`
+  → Also use TodoWrite for immediate subtasks
 - User: "I need to refactor the database layer"
-  → Add: `project_name/database::Refactor database layer`
+  → **MUST** add: `project_name/database::Refactor database layer`
+  → Also use TodoWrite for tracking your refactoring steps
 - User: "Help me add OAuth support"
-  → Add: `project_name/auth::Add OAuth 2.0 support`
+  → **MUST** add: `project_name/auth::Add OAuth 2.0 support`
+  → Also use TodoWrite for implementation tracking
 
-**Note:** Claude should still use its own internal `TodoWrite` tool for short-term task tracking during implementation. The project TDL is for user-visible, persistent, medium-to-long term goals.
+**Workflow:**
+1. Identify medium-to-long term work → **Immediately** call `mcp__tdl__add_todo`
+2. Use TodoWrite for your internal task tracking during the work
+3. When complete → Ask user if you should mark TDL item done
+
+**IMPORTANT - Use BOTH Tools:**
+- **TodoWrite (built-in):** Continue using this for short-term task tracking during implementation
+- **Project TDL (MCP):** ALSO add medium-to-long term work to the persistent TDL
+- These serve DIFFERENT purposes - use BOTH when appropriate!
+- The TDL survives across sessions; TodoWrite does not
 
 ### Checking Off Completed Tasks
 
@@ -71,4 +83,4 @@ Claude should automatically use TDL tools according to these rules:
 **Tool Usage:**
 - Use `get_todos` to silently check if tasks exist without displaying to the user
 - Use `display_todos` to show the formatted list after modifications
-<!-- TDL_PROACTIVE_USAGE_END:v0.1.0 -->
+<!-- TDL_PROACTIVE_USAGE_END:v0.1.1 -->

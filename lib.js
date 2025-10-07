@@ -1,52 +1,84 @@
 import fs from "fs/promises";
 import path from "path";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import { randomUUID } from "crypto";
 import boxen from "boxen";
-import { getColorProfile, getScope, CONFIG_DIR } from "./config.js";
+import { getColorProfile, getScope, CONFIG_DIR, MAX_CATEGORY_DEPTH } from "./config.js";
+import { TodoCategory } from "./category.js";
 
-const TODO_FILE = ".project-todos.json";
-const HISTORY_FILE = ".project-todos-history.json";
-const GLOBAL_TODO_FILE = ".global-todos.json";
-const GLOBAL_HISTORY_FILE = ".global-todos-history.json";
+const execFileAsync = promisify(execFile);
+
+// Global-only storage
+const TODO_FILE = "todos.json";
+const HISTORY_FILE = "todos-history.json";
 
 /**
- * Get the path to the todo file based on current scope
+ * Get the path to the global todo file
  */
-export async function getTodoFilePath() {
-  const scope = await getScope();
-
-  if (scope === "global") {
-    return path.join(CONFIG_DIR, GLOBAL_TODO_FILE);
-  }
-
-  // Default: project scope
-  const cwd = process.cwd();
-  return path.join(cwd, TODO_FILE);
+export function getTodoFilePath() {
+  return path.join(CONFIG_DIR, TODO_FILE);
 }
 
 /**
- * Get the path to the history file based on current scope
+ * Get the path to the global history file
  */
-export async function getHistoryFilePath() {
-  const scope = await getScope();
-
-  if (scope === "global") {
-    return path.join(CONFIG_DIR, GLOBAL_HISTORY_FILE);
-  }
-
-  // Default: project scope
-  const cwd = process.cwd();
-  return path.join(cwd, HISTORY_FILE);
+export function getHistoryFilePath() {
+  return path.join(CONFIG_DIR, HISTORY_FILE);
 }
 
 /**
- * Read todos from the project file
+ * Detect the current project name for filtering and categorization
+ * @returns {Promise<string|null>} Project name or null if not in a project
+ */
+export async function detectProjectName() {
+  try {
+    // Try git repo name first
+    const { stdout } = await execFileAsync('git', [
+      'rev-parse',
+      '--show-toplevel'
+    ]);
+
+    const repoPath = stdout.trim();
+    return path.basename(repoPath);
+  } catch (error) {
+    // Not a git repo or git not available
+    // Use current directory name as fallback
+    const cwd = process.cwd();
+    const basename = path.basename(cwd);
+
+    // Don't use generic names
+    const genericNames = ['src', 'test', 'tests', 'dist', 'build', 'home', 'lib', 'bin'];
+    if (genericNames.includes(basename.toLowerCase())) {
+      return null;
+    }
+
+    return basename;
+  }
+}
+
+/**
+ * Read todos from global storage with optional project filtering
+ * @param {Object} options - Options
+ * @param {boolean} options.filterByProject - Filter by current project
+ * @param {string} options.projectName - Specific project to filter by
  * @returns {Promise<Array>} Array of todo objects
  */
-export async function readTodos() {
+export async function readTodos(options = {}) {
   try {
-    const filePath = await getTodoFilePath();
+    const filePath = getTodoFilePath();
     const data = await fs.readFile(filePath, "utf-8");
-    return JSON.parse(data);
+    let todos = JSON.parse(data);
+
+    // Apply project filter if requested
+    if (options.filterByProject) {
+      const projectName = options.projectName || await detectProjectName();
+      if (projectName) {
+        todos = todos.filter(t => t.category === projectName);
+      }
+    }
+
+    return todos;
   } catch (error) {
     if (error.code === "ENOENT") {
       return [];
@@ -56,26 +88,29 @@ export async function readTodos() {
 }
 
 /**
- * Write todos to the project file
+ * Write todos to global storage
  * @param {Array} todos - Array of todo objects
  */
 export async function writeTodos(todos) {
-  const filePath = await getTodoFilePath();
+  const filePath = getTodoFilePath();
 
-  // Ensure parent directory exists (important for global scope)
+  // Ensure parent directory exists
   const dir = path.dirname(filePath);
   await fs.mkdir(dir, { recursive: true });
 
-  await fs.writeFile(filePath, JSON.stringify(todos, null, 2), "utf-8");
+  // Atomic write: write to temp file first, then rename
+  const tempFile = filePath + '.tmp';
+  await fs.writeFile(tempFile, JSON.stringify(todos, null, 2), "utf-8");
+  await fs.rename(tempFile, filePath);
 }
 
 /**
- * Read history from the project file
+ * Read history from global storage
  * @returns {Promise<Object>} History object with completed array and lastCleared timestamp
  */
 export async function readHistory() {
   try {
-    const filePath = await getHistoryFilePath();
+    const filePath = getHistoryFilePath();
     const data = await fs.readFile(filePath, "utf-8");
     return JSON.parse(data);
   } catch (error) {
@@ -87,17 +122,20 @@ export async function readHistory() {
 }
 
 /**
- * Write history to the project file
+ * Write history to global storage
  * @param {Object} history - History object with completed array and lastCleared timestamp
  */
 export async function writeHistory(history) {
-  const filePath = await getHistoryFilePath();
+  const filePath = getHistoryFilePath();
 
-  // Ensure parent directory exists (important for global scope)
+  // Ensure parent directory exists
   const dir = path.dirname(filePath);
   await fs.mkdir(dir, { recursive: true });
 
-  await fs.writeFile(filePath, JSON.stringify(history, null, 2), "utf-8");
+  // Atomic write: write to temp file first, then rename
+  const tempFile = filePath + '.tmp';
+  await fs.writeFile(tempFile, JSON.stringify(history, null, 2), "utf-8");
+  await fs.rename(tempFile, filePath);
 }
 
 /**
@@ -124,37 +162,56 @@ function clearHistoryIfNewDay(history) {
 }
 
 /**
- * Add a todo with optional category/subcategory parsing
- * @param {string} taskString - Task string, optionally with category prefix (cat/subcat::task or cat::task)
- * @returns {Promise<{todos: Array, added: Object}>} Updated todos array and the added todo object
+ * Find a todo by its unique ID
+ * @param {string} id - UUID of the todo
+ * @param {Array} todos - Optional array of todos to search (defaults to reading from storage)
+ * @returns {Promise<{todo: Object, index: number}>} The todo and its index, or null if not found
  */
-export async function addTodo(taskString) {
-  // Parse category and subcategory from task string
-  // Supports: cat/subcat::task or cat::task
-  let task = taskString;
-  let category = null;
-  let subcategory = null;
+export async function findTodoById(id, todos = null) {
+  if (!todos) {
+    todos = await readTodos();
+  }
 
-  const categoryMatch = taskString.match(/^([^:]+)::(.+)$/);
-  if (categoryMatch) {
-    const categoryPart = categoryMatch[1].trim();
-    task = categoryMatch[2].trim();
+  const index = todos.findIndex(t => t.id === id);
+  if (index === -1) {
+    return null;
+  }
 
-    // Check if category contains a subcategory (cat/subcat format)
-    const subcatMatch = categoryPart.match(/^([^/]+)\/(.+)$/);
-    if (subcatMatch) {
-      category = subcatMatch[1].trim();
-      subcategory = subcatMatch[2].trim();
-    } else {
-      category = categoryPart;
+  return { todo: todos[index], index };
+}
+
+/**
+ * Add a todo to global storage with optional auto-categorization
+ * @param {string} taskString - Task string, optionally with category prefix
+ * @param {Object} options - Options
+ * @param {boolean} options.autoProject - Auto-prepend project name (default: true)
+ * @param {string} options.projectOverride - Explicit project name to use
+ * @returns {Promise<{todos: Array, added: Object}>} Updated todos array and added todo
+ * @throws {Error} If category depth exceeds limit
+ */
+export async function addTodo(taskString, options = {}) {
+  const { autoProject = true, projectOverride = null } = options;
+
+  // Parse category using TodoCategory (supports up to MAX_CATEGORY_DEPTH levels)
+  const todoCategory = TodoCategory.fromString(taskString, MAX_CATEGORY_DEPTH);
+
+  // Auto-prepend project name if:
+  // 1. autoProject is enabled
+  // 2. We're in a project context
+  // 3. Task is untagged OR has only 1 level (which becomes 2nd level under project)
+  let finalCategory = todoCategory;
+
+  if (autoProject && (todoCategory.depth === 0 || todoCategory.depth === 1)) {
+    const projectName = projectOverride || await detectProjectName();
+    if (projectName) {
+      finalCategory = todoCategory.toGlobalCategory(projectName);
     }
   }
 
   const todos = await readTodos();
   const newTodo = {
-    task,
-    category,
-    subcategory,
+    id: randomUUID(),
+    ...finalCategory.toStorageV1(MAX_CATEGORY_DEPTH),
     added: new Date().toISOString(),
   };
   todos.push(newTodo);
@@ -166,69 +223,87 @@ export async function addTodo(taskString) {
 /**
  * Remove a todo by index (permanently delete, no history)
  * @param {number} index - 1-based index of the todo to remove
+ * @param {Object} options - Options
+ * @param {boolean} options.filterByProject - Was list filtered by project?
  * @returns {Promise<{todos: Array, removed: Object}>} Updated todos array and the removed todo object
  * @throws {Error} If index is invalid
  */
-export async function removeTodo(index) {
-  const todos = await readTodos();
+export async function removeTodo(index, options = {}) {
+  // Read with same filter as display to get correct indices
+  const displayTodos = await readTodos(options);
   const arrayIndex = index - 1;
 
-  if (arrayIndex < 0 || arrayIndex >= todos.length) {
-    throw new Error(`Invalid index ${index}. Valid range: 1-${todos.length}`);
+  if (arrayIndex < 0 || arrayIndex >= displayTodos.length) {
+    throw new Error(`Invalid index ${index}. Valid range: 1-${displayTodos.length}`);
   }
 
-  const removed = todos.splice(arrayIndex, 1)[0];
-  await writeTodos(todos);
+  const toRemove = displayTodos[arrayIndex];
 
-  return { todos, removed };
+  // Use the ID-based function for robustness
+  if (!toRemove.id) {
+    throw new Error("Todo does not have an ID. Run migration script.");
+  }
+
+  return await removeTodoById(toRemove.id);
 }
 
 /**
  * Complete a todo by index (move to history)
  * @param {number} index - 1-based index of the todo to complete
+ * @param {Object} options - Options
+ * @param {boolean} options.filterByProject - Was list filtered by project?
  * @returns {Promise<{todos: Array, completed: Object}>} Updated todos array and the completed todo object
  * @throws {Error} If index is invalid
  */
-export async function completeTodo(index) {
-  const todos = await readTodos();
+export async function completeTodo(index, options = {}) {
+  // Read with same filter as display to get correct indices
+  const displayTodos = await readTodos(options);
   const arrayIndex = index - 1;
 
-  if (arrayIndex < 0 || arrayIndex >= todos.length) {
-    throw new Error(`Invalid index ${index}. Valid range: 1-${todos.length}`);
+  if (arrayIndex < 0 || arrayIndex >= displayTodos.length) {
+    throw new Error(`Invalid index ${index}. Valid range: 1-${displayTodos.length}`);
   }
 
-  // Get history and apply lazy clearing
-  let history = await readHistory();
-  history = clearHistoryIfNewDay(history);
+  const toComplete = displayTodos[arrayIndex];
 
-  // Remove from todos and add to history
-  const completed = todos.splice(arrayIndex, 1)[0];
-  completed.completedAt = new Date().toISOString();
+  // Use the ID-based function for robustness
+  if (!toComplete.id) {
+    throw new Error("Todo does not have an ID. Run migration script.");
+  }
 
-  history.completed.push(completed);
-
-  // Write both files
-  await writeTodos(todos);
-  await writeHistory(history);
-
-  return { todos, completed };
+  return await completeTodoById(toComplete.id);
 }
 
 /**
- * Clear all todos
+ * Clear all todos (or filtered subset)
+ * @param {Object} options - Options
+ * @param {boolean} options.filterByProject - Clear only current project?
  * @returns {Promise<number>} Number of todos that were cleared
  */
-export async function clearTodos() {
-  const previousCount = (await readTodos()).length;
-  await writeTodos([]);
-  return previousCount;
+export async function clearTodos(options = {}) {
+  if (options.filterByProject) {
+    // Clear only current project todos
+    const projectName = await detectProjectName();
+    const allTodos = await readTodos();
+    const remaining = allTodos.filter(t => t.category !== projectName);
+    const cleared = allTodos.length - remaining.length;
+    await writeTodos(remaining);
+    return cleared;
+  } else {
+    // Clear all todos
+    const previousCount = (await readTodos()).length;
+    await writeTodos([]);
+    return previousCount;
+  }
 }
 
 /**
  * Query history (completed todos from today)
+ * @param {Object} options - Options
+ * @param {boolean} options.filterByProject - Filter by current project?
  * @returns {Promise<Array>} Array of completed todo objects with completedAt timestamps
  */
-export async function queryHistory() {
+export async function queryHistory(options = {}) {
   let history = await readHistory();
   history = clearHistoryIfNewDay(history);
 
@@ -237,38 +312,44 @@ export async function queryHistory() {
     await writeHistory(history);
   }
 
-  return history.completed;
+  let completed = history.completed;
+
+  // Apply project filter if requested
+  if (options.filterByProject) {
+    const projectName = await detectProjectName();
+    if (projectName) {
+      completed = completed.filter(t => t.category === projectName);
+    }
+  }
+
+  return completed;
 }
 
 /**
  * Restore a completed todo back to active list
  * @param {number} index - 1-based index in the history list
+ * @param {Object} options - Options
+ * @param {boolean} options.filterByProject - Was history filtered by project?
  * @returns {Promise<{todos: Array, restored: Object}>} Updated todos array and the restored todo object
  * @throws {Error} If index is invalid
  */
-export async function restoreTodo(index) {
-  const history = await readHistory();
+export async function restoreTodo(index, options = {}) {
+  // Read with same filter as display
+  const displayHistory = await queryHistory(options);
   const arrayIndex = index - 1;
 
-  if (arrayIndex < 0 || arrayIndex >= history.completed.length) {
-    throw new Error(`Invalid index ${index}. Valid range: 1-${history.completed.length}`);
+  if (arrayIndex < 0 || arrayIndex >= displayHistory.length) {
+    throw new Error(`Invalid index ${index}. Valid range: 1-${displayHistory.length}`);
   }
 
-  // Remove from history
-  const restored = history.completed.splice(arrayIndex, 1)[0];
+  const toRestore = displayHistory[arrayIndex];
 
-  // Remove completedAt timestamp
-  delete restored.completedAt;
+  // Use the ID-based function for robustness
+  if (!toRestore.id) {
+    throw new Error("Todo does not have an ID. Run migration script.");
+  }
 
-  // Add back to todos
-  const todos = await readTodos();
-  todos.push(restored);
-
-  // Write both files
-  await writeHistory(history);
-  await writeTodos(todos);
-
-  return { todos, restored };
+  return await restoreTodoById(toRestore.id);
 }
 
 /**
@@ -281,6 +362,7 @@ export async function restoreTodo(index) {
  * @param {string} [options.dateTo] - Filter todos added on or before this date (ISO string)
  * @param {string} [options.searchText] - Filter todos containing this text (case-insensitive)
  * @param {boolean} [options.includeIndices] - Include original 1-based indices in the result
+ * @param {boolean} [options.currentProject] - Filter by current project (auto-detected)
  * @returns {Promise<Array>} Filtered array of todo objects (with optional _index field if includeIndices=true)
  */
 export async function filterTodos(options = {}) {
@@ -289,6 +371,14 @@ export async function filterTodos(options = {}) {
   // Add original indices if requested
   if (options.includeIndices) {
     todos = todos.map((t, i) => ({ ...t, _index: i + 1 }));
+  }
+
+  // Current project filter
+  if (options.currentProject) {
+    const projectName = await detectProjectName();
+    if (projectName) {
+      todos = todos.filter((t) => t.category === projectName);
+    }
   }
 
   if (options.category) {
@@ -373,22 +463,57 @@ export async function getStats(options = {}) {
  * @param {string} [updates.task] - New task text
  * @param {string|null} [updates.category] - New category (use null to remove category)
  * @param {string|null} [updates.subcategory] - New subcategory (use null to remove subcategory)
+ * @param {Object} options - Options
+ * @param {boolean} options.filterByProject - Was list filtered by project?
  * @returns {Promise<{todos: Array, updated: Object}>} Updated todos array and the updated todo object
  * @throws {Error} If index is invalid or no updates provided
  */
-export async function updateTodo(index, updates = {}) {
+export async function updateTodo(index, updates = {}, options = {}) {
+  if (!updates.task && updates.category === undefined && updates.subcategory === undefined) {
+    throw new Error("No updates provided. Specify at least task, category, or subcategory.");
+  }
+
+  // Read with same filter as display
+  const displayTodos = await readTodos(options);
+  const arrayIndex = index - 1;
+
+  if (arrayIndex < 0 || arrayIndex >= displayTodos.length) {
+    throw new Error(`Invalid index ${index}. Valid range: 1-${displayTodos.length}`);
+  }
+
+  const toUpdate = displayTodos[arrayIndex];
+
+  // Use the ID-based function for robustness
+  if (!toUpdate.id) {
+    throw new Error("Todo does not have an ID. Run migration script.");
+  }
+
+  return await updateTodoById(toUpdate.id, updates);
+}
+
+/**
+ * Update a single todo by ID
+ * @param {string} id - UUID of the todo to update
+ * @param {Object} updates - Updates to apply
+ * @param {string} [updates.task] - New task text
+ * @param {string|null} [updates.category] - New category (use null to remove category)
+ * @param {string|null} [updates.subcategory] - New subcategory (use null to remove subcategory)
+ * @returns {Promise<{todos: Array, updated: Object}>} Updated todos array and the updated todo object
+ * @throws {Error} If id not found or no updates provided
+ */
+export async function updateTodoById(id, updates = {}) {
   if (!updates.task && updates.category === undefined && updates.subcategory === undefined) {
     throw new Error("No updates provided. Specify at least task, category, or subcategory.");
   }
 
   const todos = await readTodos();
-  const arrayIndex = index - 1;
+  const result = await findTodoById(id, todos);
 
-  if (arrayIndex < 0 || arrayIndex >= todos.length) {
-    throw new Error(`Invalid index ${index}. Valid range: 1-${todos.length}`);
+  if (!result) {
+    throw new Error(`Todo with id "${id}" not found`);
   }
 
-  const todo = todos[arrayIndex];
+  const todo = result.todo;
 
   if (updates.task !== undefined) {
     todo.task = updates.task;
@@ -408,33 +533,181 @@ export async function updateTodo(index, updates = {}) {
 }
 
 /**
- * Update multiple todos matching a filter
- * @param {Object} filter - Filter criteria (same as filterTodos options)
- * @param {Object} updates - Updates to apply
- * @param {string} [updates.task] - New task text
- * @param {string|null} [updates.category] - New category (use null to remove category)
- * @returns {Promise<{todos: Array, updated: Array, count: number}>} Results
- * @throws {Error} If no updates provided
+ * Remove a todo by ID (permanently delete, no history)
+ * @param {string} id - UUID of the todo to remove
+ * @returns {Promise<{todos: Array, removed: Object}>} Updated todos array and the removed todo object
+ * @throws {Error} If id not found
  */
-export async function bulkUpdate(filter = {}, updates = {}) {
-  if (!updates.task && updates.category === undefined) {
-    throw new Error("No updates provided. Specify at least task or category.");
+export async function removeTodoById(id) {
+  const todos = await readTodos();
+  const result = await findTodoById(id, todos);
+
+  if (!result) {
+    throw new Error(`Todo with id "${id}" not found`);
+  }
+
+  const removed = todos.splice(result.index, 1)[0];
+  await writeTodos(todos);
+
+  return { todos, removed };
+}
+
+/**
+ * Complete a todo by ID (move to history)
+ * @param {string} id - UUID of the todo to complete
+ * @returns {Promise<{todos: Array, completed: Object}>} Updated todos array and the completed todo object
+ * @throws {Error} If id not found
+ */
+export async function completeTodoById(id) {
+  const todos = await readTodos();
+  const result = await findTodoById(id, todos);
+
+  if (!result) {
+    throw new Error(`Todo with id "${id}" not found`);
+  }
+
+  // Get history and apply lazy clearing
+  let history = await readHistory();
+  history = clearHistoryIfNewDay(history);
+
+  // Remove from todos and add to history
+  const completed = todos.splice(result.index, 1)[0];
+  completed.completedAt = new Date().toISOString();
+
+  history.completed.push(completed);
+
+  // Write both files
+  await writeTodos(todos);
+  await writeHistory(history);
+
+  return { todos, completed };
+}
+
+/**
+ * Restore a completed todo by ID back to active list
+ * @param {string} id - UUID of the completed todo to restore
+ * @returns {Promise<{todos: Array, restored: Object}>} Updated todos array and the restored todo object
+ * @throws {Error} If id not found in history
+ */
+export async function restoreTodoById(id) {
+  const history = await readHistory();
+  const historyIndex = history.completed.findIndex(t => t.id === id);
+
+  if (historyIndex === -1) {
+    throw new Error(`Completed todo with id "${id}" not found in history`);
+  }
+
+  // Remove from history
+  const restored = history.completed.splice(historyIndex, 1)[0];
+
+  // Remove completedAt timestamp
+  delete restored.completedAt;
+
+  // Add back to todos
+  const todos = await readTodos();
+  todos.push(restored);
+
+  // Write both files (todos first to prevent data loss if history write fails)
+  await writeTodos(todos);
+  await writeHistory(history);
+
+  return { todos, restored };
+}
+
+/**
+ * Add multiple todos at once
+ * @param {Array<string|Object>} tasks - Array of task strings or objects with {task, autoProject, projectOverride}
+ * @param {Object} [defaultOptions] - Default options to apply to all tasks (can be overridden per task)
+ * @param {boolean} [defaultOptions.autoProject=true] - Auto-prepend project name by default
+ * @param {string} [defaultOptions.projectOverride] - Project name to use for all tasks
+ * @returns {Promise<{todos: Array, added: Array, count: number}>} Results
+ */
+export async function bulkAdd(tasks, defaultOptions = {}) {
+  if (!Array.isArray(tasks) || tasks.length === 0) {
+    throw new Error("Tasks must be a non-empty array");
+  }
+
+  const added = [];
+
+  for (const taskInput of tasks) {
+    let taskString, options;
+
+    if (typeof taskInput === 'string') {
+      taskString = taskInput;
+      options = { ...defaultOptions };
+    } else if (typeof taskInput === 'object' && taskInput.task) {
+      taskString = taskInput.task;
+      options = {
+        autoProject: taskInput.autoProject ?? defaultOptions.autoProject ?? true,
+        projectOverride: taskInput.projectOverride ?? defaultOptions.projectOverride
+      };
+    } else {
+      throw new Error("Each task must be a string or object with 'task' property");
+    }
+
+    const result = await addTodo(taskString, options);
+    added.push(result.added);
   }
 
   const todos = await readTodos();
-  const toUpdate = await filterTodos(filter);
+  return { todos, added, count: added.length };
+}
+
+/**
+ * Update multiple todos by IDs or filter
+ * @param {Object} selector - Either {ids: Array<string>} or {filter: Object}
+ * @param {Array<string>} [selector.ids] - Array of todo IDs to update
+ * @param {Object} [selector.filter] - Filter criteria (same as filterTodos options)
+ * @param {Object} updates - Updates to apply
+ * @param {string} [updates.task] - New task text
+ * @param {string|null} [updates.category] - New category (use null to remove category)
+ * @param {string|null} [updates.subcategory] - New subcategory (use null to remove subcategory)
+ * @returns {Promise<{todos: Array, updated: Array, count: number}>} Results
+ * @throws {Error} If no updates provided or invalid selector
+ */
+export async function bulkUpdate(selector = {}, updates = {}) {
+  if (!updates.task && updates.category === undefined && updates.subcategory === undefined) {
+    throw new Error("No updates provided. Specify at least task, category, or subcategory.");
+  }
+
+  let toUpdateIds;
+
+  if (selector.ids) {
+    // Direct ID list provided
+    if (!Array.isArray(selector.ids) || selector.ids.length === 0) {
+      throw new Error("ids must be a non-empty array");
+    }
+    toUpdateIds = new Set(selector.ids);
+  } else if (selector.filter !== undefined) {
+    // Filter provided
+    const toUpdate = await filterTodos(selector.filter);
+    toUpdateIds = new Set(toUpdate.map((t) => t.id));
+  } else {
+    // Backward compatibility: treat selector as filter
+    // But reject completely empty selector to prevent accidental bulk updates on all todos
+    const hasAnyFilterKey = Object.keys(selector).some(key =>
+      ['category', 'subcategory', 'untagged', 'currentProject', 'dateFrom', 'dateTo', 'searchText'].includes(key)
+    );
+    if (!hasAnyFilterKey) {
+      throw new Error("Empty selector would update all todos. Provide ids array or filter criteria.");
+    }
+    const toUpdate = await filterTodos(selector);
+    toUpdateIds = new Set(toUpdate.map((t) => t.id));
+  }
+
+  const todos = await readTodos();
   const updated = [];
 
-  // Create a Set of stringified todos for efficient matching
-  const toUpdateSet = new Set(toUpdate.map((t) => JSON.stringify(t)));
-
   todos.forEach((todo) => {
-    if (toUpdateSet.has(JSON.stringify(todo))) {
+    if (toUpdateIds.has(todo.id)) {
       if (updates.task !== undefined) {
         todo.task = updates.task;
       }
       if (updates.category !== undefined) {
         todo.category = updates.category;
+      }
+      if (updates.subcategory !== undefined) {
+        todo.subcategory = updates.subcategory;
       }
       updated.push({ ...todo });
     }
@@ -446,20 +719,43 @@ export async function bulkUpdate(filter = {}, updates = {}) {
 }
 
 /**
- * Delete multiple todos matching a filter
- * @param {Object} filter - Filter criteria (same as filterTodos options)
+ * Delete multiple todos by IDs or filter
+ * @param {Object} selector - Either {ids: Array<string>} or {filter: Object}
+ * @param {Array<string>} [selector.ids] - Array of todo IDs to delete
+ * @param {Object} [selector.filter] - Filter criteria (same as filterTodos options)
  * @returns {Promise<{todos: Array, deleted: Array, count: number}>} Results
  */
-export async function bulkDelete(filter = {}) {
+export async function bulkDelete(selector = {}) {
+  let toDeleteIds;
+
+  if (selector.ids) {
+    // Direct ID list provided
+    if (!Array.isArray(selector.ids) || selector.ids.length === 0) {
+      throw new Error("ids must be a non-empty array");
+    }
+    toDeleteIds = new Set(selector.ids);
+  } else if (selector.filter !== undefined) {
+    // Filter provided
+    const toDelete = await filterTodos(selector.filter);
+    toDeleteIds = new Set(toDelete.map((t) => t.id));
+  } else {
+    // Backward compatibility: treat selector as filter
+    // But reject completely empty selector to prevent accidental deletion of all todos
+    const hasAnyFilterKey = Object.keys(selector).some(key =>
+      ['category', 'subcategory', 'untagged', 'currentProject', 'dateFrom', 'dateTo', 'searchText'].includes(key)
+    );
+    if (!hasAnyFilterKey) {
+      throw new Error("Empty selector would delete all todos. Provide ids array or filter criteria.");
+    }
+    const toDelete = await filterTodos(selector);
+    toDeleteIds = new Set(toDelete.map((t) => t.id));
+  }
+
   const todos = await readTodos();
-  const toDelete = await filterTodos(filter);
   const deleted = [];
 
-  // Create a Set of stringified todos for efficient matching
-  const toDeleteSet = new Set(toDelete.map((t) => JSON.stringify(t)));
-
   const remaining = todos.filter((todo) => {
-    if (toDeleteSet.has(JSON.stringify(todo))) {
+    if (toDeleteIds.has(todo.id)) {
       deleted.push({ ...todo });
       return false;
     }
@@ -488,13 +784,18 @@ function formatTodoItem(todo, colors) {
     minute: "2-digit",
   });
 
-  // Build category tag with subcategory if present
+  // Use TodoCategory for consistent formatting
+  const todoCategory = TodoCategory.fromStorage(todo);
   let categoryTag = "";
-  if (todo.category) {
+
+  if (!todoCategory.isUntagged()) {
+    const categoryStr = todoCategory.toString();
     if (todo.subcategory) {
+      // 2-level: show as category/subcategory with color coding
       categoryTag = `${colors.category}[${todo.category}/${colors.subcategory}${todo.subcategory}${colors.category}]\x1b[0m `;
     } else {
-      categoryTag = `${colors.category}[${todo.category}]\x1b[0m `;
+      // 1-level: show as category
+      categoryTag = `${colors.category}[${categoryStr}]\x1b[0m `;
     }
   }
 
@@ -513,13 +814,18 @@ function formatCompletedItem(todo, colors) {
     minute: '2-digit'
   });
 
-  // Build category tag with subcategory if present
+  // Use TodoCategory for consistent formatting
+  const todoCategory = TodoCategory.fromStorage(todo);
   let categoryTag = "";
-  if (todo.category) {
+
+  if (!todoCategory.isUntagged()) {
+    const categoryStr = todoCategory.toString();
     if (todo.subcategory) {
+      // 2-level: show as category/subcategory with color coding
       categoryTag = `${colors.category}[${todo.category}/${colors.subcategory}${todo.subcategory}${colors.category}]\x1b[0m `;
     } else {
-      categoryTag = `${colors.category}[${todo.category}]\x1b[0m `;
+      // 1-level: show as category
+      categoryTag = `${colors.category}[${categoryStr}]\x1b[0m `;
     }
   }
 
@@ -536,21 +842,11 @@ const UNTAGGED_GROUP_KEY = '__untagged__';
 function groupTodosByCategory(todos) {
   const groupMap = new Map();
 
-  // First pass: organize into groups
+  // First pass: organize into groups using TodoCategory
   todos.forEach((todo) => {
-    let groupKey;
-    let groupLabel;
-
-    if (!todo.category) {
-      groupKey = UNTAGGED_GROUP_KEY;
-      groupLabel = null;
-    } else if (todo.subcategory) {
-      groupKey = `${todo.category}/${todo.subcategory}`;
-      groupLabel = `${todo.category}/${todo.subcategory}`;
-    } else {
-      groupKey = todo.category;
-      groupLabel = todo.category;
-    }
+    const todoCategory = TodoCategory.fromStorage(todo);
+    const groupKey = todoCategory.toGroupKey();
+    const groupLabel = todoCategory.toDisplayLabel();
 
     if (!groupMap.has(groupKey)) {
       groupMap.set(groupKey, {
@@ -581,13 +877,15 @@ function groupTodosByCategory(todos) {
  * @param {Array} todos - Array of todo objects (must have _index field set)
  * @param {string} [categoryFilter] - Optional category filter being applied
  * @param {Array} [completed] - Optional array of completed todos to show
+ * @param {Object} [options] - Formatting options
+ * @param {boolean} [options.includeIdMap] - Include machine-readable index→ID mapping
  * @returns {Promise<string>} Formatted box with todos
  */
-export async function formatTodoList(todos, categoryFilter = null, completed = null) {
+export async function formatTodoList(todos, categoryFilter = null, completed = null, options = {}) {
   // Load color profile and scope from config
   const colors = await getColorProfile();
   const scope = await getScope();
-  const scopeLabel = scope === "global" ? "Global" : "Project";
+  const scopeLabel = scope === "global" ? "All Projects" : "Current Project";
 
   // Use fixed width that works well across different terminal sizes
   const boxWidth = 45;
@@ -650,12 +948,23 @@ export async function formatTodoList(todos, categoryFilter = null, completed = n
   });
 
   // Color all border characters
-  return box
+  let output = box
     .replace(/╭/g, `${colors.border}╭\x1b[0m`)
     .replace(/╮/g, `${colors.border}╮\x1b[0m`)
     .replace(/╰/g, `${colors.border}╰\x1b[0m`)
     .replace(/╯/g, `${colors.border}╯\x1b[0m`)
     .replace(/│/g, `${colors.border}│\x1b[0m`)
     .replace(/─/g, `${colors.border}─\x1b[0m`);
-}
 
+  // Add machine-readable ID mapping if requested
+  if (options.includeIdMap && todos.length > 0) {
+    const idMap = todos.map(t => ({
+      index: t._index,
+      id: t.id
+    }));
+
+    output += `\n\n<!-- ID_MAP: ${JSON.stringify(idMap)} -->`;
+  }
+
+  return output;
+}
