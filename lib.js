@@ -615,6 +615,193 @@ export async function restoreTodoById(id) {
 }
 
 /**
+ * Remove item(s) from history permanently
+ * @param {string|Array<string>|Object} idOrFilter - Single ID, array of IDs, or filter object
+ * @returns {Promise<{removed: Array, count: number}>} Removed items and count
+ */
+export async function removeFromHistory(idOrFilter) {
+  const history = await readHistory();
+  const removed = [];
+
+  if (typeof idOrFilter === 'string') {
+    // Single ID
+    const index = history.completed.findIndex(t => t.id === idOrFilter);
+    if (index !== -1) {
+      removed.push(history.completed.splice(index, 1)[0]);
+    }
+  } else if (Array.isArray(idOrFilter)) {
+    // Array of IDs
+    if (idOrFilter.length === 0) {
+      throw new Error("ids array cannot be empty");
+    }
+    const idSet = new Set(idOrFilter);
+    const remaining = [];
+    for (const item of history.completed) {
+      if (idSet.has(item.id)) {
+        removed.push(item);
+      } else {
+        remaining.push(item);
+      }
+    }
+    history.completed = remaining;
+  } else if (typeof idOrFilter === 'object') {
+    // Filter - validate not empty
+    const filterKeys = Object.keys(idOrFilter);
+    const validKeys = ['category', 'subcategory', 'untagged', 'dateFrom', 'dateTo', 'searchText'];
+    const hasValidFilter = filterKeys.some(key => validKeys.includes(key));
+    if (!hasValidFilter) {
+      throw new Error("Empty filter would remove all history items. Provide id, ids array, or filter criteria.");
+    }
+    const toRemove = await filterHistoryItems(history.completed, idOrFilter);
+    const removeIds = new Set(toRemove.map(t => t.id));
+    const remaining = [];
+    for (const item of history.completed) {
+      if (removeIds.has(item.id)) {
+        removed.push(item);
+      } else {
+        remaining.push(item);
+      }
+    }
+    history.completed = remaining;
+  }
+
+  await writeHistory(history);
+  return { removed, count: removed.length };
+}
+
+/**
+ * Update item(s) in history
+ * @param {string|Array<string>|Object} idOrFilter - Single ID, array of IDs, or filter object
+ * @param {Object} updates - Updates to apply {task, category, subcategory}
+ * @returns {Promise<{updated: Array, count: number}>} Updated items and count
+ */
+export async function updateHistory(idOrFilter, updates) {
+  // Validate updates object
+  if (!updates.task && updates.category === undefined && updates.subcategory === undefined) {
+    throw new Error("No updates provided. Specify at least task, category, or subcategory.");
+  }
+
+  const history = await readHistory();
+  const updated = [];
+
+  let toUpdate = [];
+
+  if (typeof idOrFilter === 'string') {
+    // Single ID
+    const item = history.completed.find(t => t.id === idOrFilter);
+    if (item) toUpdate.push(item);
+  } else if (Array.isArray(idOrFilter)) {
+    // Array of IDs
+    if (idOrFilter.length === 0) {
+      throw new Error("ids array cannot be empty");
+    }
+    toUpdate = history.completed.filter(t => idOrFilter.includes(t.id));
+  } else if (typeof idOrFilter === 'object') {
+    // Filter - validate not empty
+    const filterKeys = Object.keys(idOrFilter);
+    const validKeys = ['category', 'subcategory', 'untagged', 'dateFrom', 'dateTo', 'searchText'];
+    const hasValidFilter = filterKeys.some(key => validKeys.includes(key));
+    if (!hasValidFilter) {
+      throw new Error("Empty filter would update all history items. Provide id, ids array, or filter criteria.");
+    }
+    toUpdate = await filterHistoryItems(history.completed, idOrFilter);
+  }
+
+  // Apply updates
+  for (const item of toUpdate) {
+    if (updates.task !== undefined) item.task = updates.task;
+    if (updates.category !== undefined) item.category = updates.category;
+    if (updates.subcategory !== undefined) item.subcategory = updates.subcategory;
+    updated.push(item);
+  }
+
+  await writeHistory(history);
+  return { updated, count: updated.length };
+}
+
+/**
+ * Clear history (all or filtered)
+ * @param {Object} [filter] - Optional filter to clear only matching items
+ * @returns {Promise<number>} Number of items cleared
+ */
+export async function clearHistory(filter = null) {
+  const history = await readHistory();
+  const initialCount = history.completed.length;
+
+  if (filter) {
+    // Validate filter not empty
+    const filterKeys = Object.keys(filter);
+    const validKeys = ['category', 'subcategory', 'untagged', 'dateFrom', 'dateTo', 'searchText'];
+    const hasValidFilter = filterKeys.some(key => validKeys.includes(key));
+    if (!hasValidFilter) {
+      throw new Error("Empty filter would clear all history. Provide filter criteria or call without filter parameter.");
+    }
+    // Clear only filtered items
+    const toRemove = await filterHistoryItems(history.completed, filter);
+    const removeIds = new Set(toRemove.map(t => t.id));
+    history.completed = history.completed.filter(item => !removeIds.has(item.id));
+  } else {
+    // Clear all
+    history.completed = [];
+    history.lastCleared = new Date().toISOString();
+  }
+
+  await writeHistory(history);
+  return initialCount - history.completed.length;
+}
+
+/**
+ * Filter history items based on criteria
+ * @param {Array} items - History items to filter
+ * @param {Object} filter - Filter criteria
+ * @returns {Promise<Array>} Filtered items
+ */
+async function filterHistoryItems(items, filter) {
+  let filtered = [...items];
+
+  if (filter.category) {
+    filtered = filtered.filter(t => t.category === filter.category);
+  }
+
+  if (filter.subcategory) {
+    filtered = filtered.filter(t => t.subcategory === filter.subcategory);
+  }
+
+  if (filter.untagged) {
+    filtered = filtered.filter(t => !t.category);
+  }
+
+  if (filter.dateFrom) {
+    const fromDate = new Date(filter.dateFrom);
+    if (isNaN(fromDate.getTime())) {
+      throw new Error(`Invalid dateFrom: "${filter.dateFrom}"`);
+    }
+    filtered = filtered.filter(t => {
+      if (!t.completedAt) return false;
+      return new Date(t.completedAt) >= fromDate;
+    });
+  }
+
+  if (filter.dateTo) {
+    const toDate = new Date(filter.dateTo);
+    if (isNaN(toDate.getTime())) {
+      throw new Error(`Invalid dateTo: "${filter.dateTo}"`);
+    }
+    filtered = filtered.filter(t => {
+      if (!t.completedAt) return false;
+      return new Date(t.completedAt) <= toDate;
+    });
+  }
+
+  if (filter.searchText) {
+    const search = filter.searchText.toLowerCase();
+    filtered = filtered.filter(t => t.task.toLowerCase().includes(search));
+  }
+
+  return filtered;
+}
+
+/**
  * Add multiple todos at once
  * @param {Array<string|Object>} tasks - Array of task strings or objects with {task, autoProject, projectOverride}
  * @param {Object} [defaultOptions] - Default options to apply to all tasks (can be overridden per task)
@@ -835,38 +1022,56 @@ function formatCompletedItem(todo, colors) {
 const UNTAGGED_GROUP_KEY = '__untagged__';
 
 /**
- * Group todos by category/subcategory for display
+ * Group todos hierarchically by category/subcategory for display
  * @param {Array} todos - Array of todo objects (should have _index field set)
- * @returns {Array} Array of groups, each with categoryKey and todos array
+ * @returns {Array} Array of hierarchical groups with category, subcategories, and todos
  */
 function groupTodosByCategory(todos) {
-  const groupMap = new Map();
+  const categoryMap = new Map(); // Top-level categories
 
-  // First pass: organize into groups using TodoCategory
+  // Organize into hierarchical structure
   todos.forEach((todo) => {
-    const todoCategory = TodoCategory.fromStorage(todo);
-    const groupKey = todoCategory.toGroupKey();
-    const groupLabel = todoCategory.toDisplayLabel();
+    const category = todo.category || UNTAGGED_GROUP_KEY;
+    const subcategory = todo.subcategory || null;
 
-    if (!groupMap.has(groupKey)) {
-      groupMap.set(groupKey, {
-        key: groupKey,
-        label: groupLabel,
-        todos: []
+    // Ensure top-level category exists
+    if (!categoryMap.has(category)) {
+      categoryMap.set(category, {
+        category: category,
+        subcategories: new Map()
       });
     }
 
-    // Add todo as-is (already has _index field from caller)
-    groupMap.get(groupKey).todos.push(todo);
+    const catGroup = categoryMap.get(category);
+
+    // Ensure subcategory exists (or null for no subcategory)
+    if (!catGroup.subcategories.has(subcategory)) {
+      catGroup.subcategories.set(subcategory, []);
+    }
+
+    // Add todo to subcategory
+    catGroup.subcategories.get(subcategory).push(todo);
   });
 
-  // Convert Map to array and sort: untagged groups last, categorized groups alphabetically
-  const groups = Array.from(groupMap.values());
+  // Convert to array and sort
+  const groups = Array.from(categoryMap.entries()).map(([category, data]) => ({
+    category,
+    subcategories: Array.from(data.subcategories.entries()).map(([subcat, todos]) => ({
+      subcategory: subcat,
+      todos
+    })).sort((a, b) => {
+      // Sort subcategories: null (no subcategory) first, then alphabetically
+      if (a.subcategory === null) return -1;
+      if (b.subcategory === null) return 1;
+      return a.subcategory.localeCompare(b.subcategory);
+    })
+  }));
 
+  // Sort top-level categories: untagged last, others alphabetically
   groups.sort((a, b) => {
-    if (a.key === UNTAGGED_GROUP_KEY) return 1;
-    if (b.key === UNTAGGED_GROUP_KEY) return -1;
-    return a.key.localeCompare(b.key);
+    if (a.category === UNTAGGED_GROUP_KEY) return 1;
+    if (b.category === UNTAGGED_GROUP_KEY) return -1;
+    return a.category.localeCompare(b.category);
   });
 
   return groups;
@@ -894,6 +1099,7 @@ export async function formatTodoList(todos, categoryFilter = null, completed = n
   const separatorWidth = boxWidth - 8;
 
   const sections = [];
+  let flattenedTodos = []; // For ID mapping after grouping
 
   // Active todos section
   if (todos.length === 0) {
@@ -902,25 +1108,45 @@ export async function formatTodoList(todos, categoryFilter = null, completed = n
       : `${colors.empty}No active todos!\x1b[0m`;
     sections.push(emptyMessage);
   } else {
-    // Group todos by category
+    // Group todos hierarchically by category
     const groups = groupTodosByCategory(todos);
 
+    // Reassign sequential indices after grouping for display order
+    let displayIndex = 1;
+    groups.forEach(group => {
+      group.subcategories.forEach(subGroup => {
+        subGroup.todos.forEach(todo => {
+          todo._index = displayIndex++;
+          flattenedTodos.push(todo); // Build flattened list in display order
+        });
+      });
+    });
+
+    // Render hierarchical structure
     groups.forEach((group, groupIndex) => {
-      // Add separator between groups (but not before first group)
+      // Add separator between top-level categories (but not before first)
       if (groupIndex > 0) {
         sections.push("");
       }
 
-      // Add group header
-      if (group.label) {
-        sections.push(`${colors.categoryHeader}${group.label}\x1b[0m`);
-      } else {
+      // Add category header
+      if (group.category === UNTAGGED_GROUP_KEY) {
         sections.push(`${colors.untaggedHeader}(untagged)\x1b[0m`);
+      } else {
+        sections.push(`${colors.categoryHeader}${group.category}\x1b[0m`);
       }
 
-      // Add todos in this group
-      const todoLines = group.todos.map(todo => formatTodoItem(todo, colors)).join("\n");
-      sections.push(todoLines);
+      // Add subcategories
+      group.subcategories.forEach((subGroup, subIndex) => {
+        // Add subcategory header if it exists
+        if (subGroup.subcategory !== null) {
+          sections.push(`  ${colors.subcategoryHeader}${subGroup.subcategory}\x1b[0m`);
+        }
+
+        // Add todos in this subcategory
+        const todoLines = subGroup.todos.map(todo => formatTodoItem(todo, colors)).join("\n");
+        sections.push(todoLines);
+      });
     });
   }
 
@@ -957,8 +1183,8 @@ export async function formatTodoList(todos, categoryFilter = null, completed = n
     .replace(/─/g, `${colors.border}─\x1b[0m`);
 
   // Add machine-readable ID mapping if requested
-  if (options.includeIdMap && todos.length > 0) {
-    const idMap = todos.map(t => ({
+  if (options.includeIdMap && flattenedTodos.length > 0) {
+    const idMap = flattenedTodos.map(t => ({
       index: t._index,
       id: t.id
     }));

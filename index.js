@@ -21,6 +21,9 @@ import {
   bulkDelete,
   queryHistory,
   restoreTodoById,
+  removeFromHistory,
+  updateHistory,
+  clearHistory,
   detectProjectName,
   readTodos,
 } from "./lib.js";
@@ -98,12 +101,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "remove_todos",
         description:
-          "Remove one or more todos permanently (no history). " +
+          "Remove one or more todos permanently. " +
+          "Set fromHistory: true to remove from history instead of active todos. " +
           "Accepts single ID, array of IDs, or filter criteria. " +
           "Examples: " +
           "Single: { id: 'uuid' }, " +
           "Multiple: { ids: ['uuid1', 'uuid2'] }, " +
-          "Filter: { filter: { category: 'backend' } }",
+          "Filter: { filter: { category: 'backend' } }, " +
+          "History: { filter: { searchText: 'test' }, fromHistory: true }",
         inputSchema: {
           type: "object",
           properties: {
@@ -129,6 +134,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 dateTo: { type: "string" },
                 searchText: { type: "string" },
               },
+            },
+            fromHistory: {
+              type: "boolean",
+              description: "If true, remove from history instead of active todos (default: false)"
             },
           },
         },
@@ -175,11 +184,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "update_todos",
         description:
           "Update one or more todos' text and/or categories. " +
+          "Set fromHistory: true to update history items instead of active todos. " +
           "Accepts single ID, array of IDs, or filter criteria, plus updates to apply. " +
           "Examples: " +
           "Single: { id: 'uuid', updates: { task: 'New text' } }, " +
           "Multiple: { ids: ['uuid1', 'uuid2'], updates: { category: 'backend' } }, " +
-          "Filter: { filter: { category: 'old' }, updates: { category: 'new' } }",
+          "Filter: { filter: { category: 'old' }, updates: { category: 'new' } }, " +
+          "History: { filter: { category: 'old' }, updates: { category: 'new' }, fromHistory: true }",
         inputSchema: {
           type: "object",
           properties: {
@@ -214,6 +225,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 category: { type: ["string", "null"] },
                 subcategory: { type: ["string", "null"] },
               },
+            },
+            fromHistory: {
+              type: "boolean",
+              description: "If true, update history items instead of active todos (default: false)"
             },
           },
           required: ["updates"],
@@ -435,47 +450,97 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "remove_todos": {
-        // Convert single id/ids/filter to unified selector
-        let selector;
-        if (args.id) {
-          selector = { ids: [args.id] };
-        } else if (args.ids) {
-          if (args.ids.length === 0) {
-            throw new Error("ids array cannot be empty");
-          }
-          selector = { ids: args.ids };
-        } else if (args.filter) {
-          if (Object.keys(args.filter).length === 0) {
-            throw new Error("filter must contain at least one criteria");
-          }
-          selector = { filter: args.filter };
-        } else {
-          throw new Error("Must provide id, ids array, or filter");
-        }
+        const fromHistory = args.fromHistory || false;
 
-        const { todos, deleted, count } = await bulkDelete(selector);
+        if (fromHistory) {
+          // Remove from history
+          let idOrFilter;
+          if (args.id) {
+            idOrFilter = args.id;
+          } else if (args.ids) {
+            if (args.ids.length === 0) {
+              throw new Error("ids array cannot be empty");
+            }
+            idOrFilter = args.ids;
+          } else if (args.filter) {
+            if (Object.keys(args.filter).length === 0) {
+              throw new Error("filter must contain at least one criteria");
+            }
+            idOrFilter = args.filter;
+          } else {
+            throw new Error("Must provide id, ids array, or filter");
+          }
 
-        if (count === 1) {
-          return {
-            content: [{
-              type: "text",
-              text: `Removed "${deleted[0].task}"\nRemaining items: ${todos.length}`
-            }],
-          };
+          const { removed, count } = await removeFromHistory(idOrFilter);
+
+          if (count === 0) {
+            return {
+              content: [{ type: "text", text: "No history items matched" }],
+            };
+          } else if (count === 1) {
+            return {
+              content: [{
+                type: "text",
+                text: `Removed from history: "${removed[0].task}"`
+              }],
+            };
+          } else {
+            let text = `Removed ${count} items from history:\n`;
+            removed.forEach((t, i) => {
+              const cat = t.category && t.subcategory
+                ? `[${t.category}/${t.subcategory}] `
+                : t.category
+                  ? `[${t.category}] `
+                  : "";
+              text += `${i + 1}. ${cat}${t.task}\n`;
+            });
+            return {
+              content: [{ type: "text", text }],
+            };
+          }
         } else {
-          let text = `Removed ${count} todos:\n`;
-          deleted.forEach((t, i) => {
-            const cat = t.category && t.subcategory
-              ? `[${t.category}/${t.subcategory}] `
-              : t.category
-                ? `[${t.category}] `
-                : "";
-            text += `${i + 1}. ${cat}${t.task}\n`;
-          });
-          text += `\nRemaining items: ${todos.length}`;
-          return {
-            content: [{ type: "text", text }],
-          };
+          // Remove from active todos
+          let selector;
+          if (args.id) {
+            selector = { ids: [args.id] };
+          } else if (args.ids) {
+            if (args.ids.length === 0) {
+              throw new Error("ids array cannot be empty");
+            }
+            selector = { ids: args.ids };
+          } else if (args.filter) {
+            if (Object.keys(args.filter).length === 0) {
+              throw new Error("filter must contain at least one criteria");
+            }
+            selector = { filter: args.filter };
+          } else {
+            throw new Error("Must provide id, ids array, or filter");
+          }
+
+          const { todos, deleted, count } = await bulkDelete(selector);
+
+          if (count === 1) {
+            return {
+              content: [{
+                type: "text",
+                text: `Removed "${deleted[0].task}"\nRemaining items: ${todos.length}`
+              }],
+            };
+          } else {
+            let text = `Removed ${count} todos:\n`;
+            deleted.forEach((t, i) => {
+              const cat = t.category && t.subcategory
+                ? `[${t.category}/${t.subcategory}] `
+                : t.category
+                  ? `[${t.category}] `
+                  : "";
+              text += `${i + 1}. ${cat}${t.task}\n`;
+            });
+            text += `\nRemaining items: ${todos.length}`;
+            return {
+              content: [{ type: "text", text }],
+            };
+          }
         }
       }
 
@@ -546,52 +611,108 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "update_todos": {
-        // Convert single id/ids/filter to unified selector
-        let selector;
-        if (args.id) {
-          selector = { ids: [args.id] };
-        } else if (args.ids) {
-          if (args.ids.length === 0) {
-            throw new Error("ids array cannot be empty");
-          }
-          selector = { ids: args.ids };
-        } else if (args.filter) {
-          if (Object.keys(args.filter).length === 0) {
-            throw new Error("filter must contain at least one criteria");
-          }
-          selector = { filter: args.filter };
-        } else {
-          throw new Error("Must provide id, ids array, or filter");
-        }
+        const fromHistory = args.fromHistory || false;
 
-        const { todos, updated, count } = await bulkUpdate(selector, args.updates);
+        if (fromHistory) {
+          // Update history items
+          let idOrFilter;
+          if (args.id) {
+            idOrFilter = args.id;
+          } else if (args.ids) {
+            if (args.ids.length === 0) {
+              throw new Error("ids array cannot be empty");
+            }
+            idOrFilter = args.ids;
+          } else if (args.filter) {
+            if (Object.keys(args.filter).length === 0) {
+              throw new Error("filter must contain at least one criteria");
+            }
+            idOrFilter = args.filter;
+          } else {
+            throw new Error("Must provide id, ids array, or filter");
+          }
 
-        if (count === 1) {
-          const todo = updated[0];
-          const cat = todo.category && todo.subcategory
-            ? `[${todo.category}/${todo.subcategory}] `
-            : todo.category
-              ? `[${todo.category}] `
-              : "";
-          return {
-            content: [{
-              type: "text",
-              text: `Updated ${cat}"${todo.task}"`
-            }],
-          };
-        } else {
-          let text = `Updated ${count} todos:\n`;
-          updated.forEach((t, i) => {
-            const cat = t.category && t.subcategory
-              ? `[${t.category}/${t.subcategory}] `
-              : t.category
-                ? `[${t.category}] `
+          const { updated, count } = await updateHistory(idOrFilter, args.updates);
+
+          if (count === 0) {
+            return {
+              content: [{ type: "text", text: "No history items matched" }],
+            };
+          } else if (count === 1) {
+            const todo = updated[0];
+            const cat = todo.category && todo.subcategory
+              ? `[${todo.category}/${todo.subcategory}] `
+              : todo.category
+                ? `[${todo.category}] `
                 : "";
-            text += `${i + 1}. ${cat}${t.task}\n`;
-          });
-          return {
-            content: [{ type: "text", text }],
-          };
+            return {
+              content: [{
+                type: "text",
+                text: `Updated in history: ${cat}"${todo.task}"`
+              }],
+            };
+          } else {
+            let text = `Updated ${count} history items:\n`;
+            updated.forEach((t, i) => {
+              const cat = t.category && t.subcategory
+                ? `[${t.category}/${t.subcategory}] `
+                : t.category
+                  ? `[${t.category}] `
+                  : "";
+              text += `${i + 1}. ${cat}${t.task}\n`;
+            });
+            return {
+              content: [{ type: "text", text }],
+            };
+          }
+        } else {
+          // Update active todos
+          let selector;
+          if (args.id) {
+            selector = { ids: [args.id] };
+          } else if (args.ids) {
+            if (args.ids.length === 0) {
+              throw new Error("ids array cannot be empty");
+            }
+            selector = { ids: args.ids };
+          } else if (args.filter) {
+            if (Object.keys(args.filter).length === 0) {
+              throw new Error("filter must contain at least one criteria");
+            }
+            selector = { filter: args.filter };
+          } else {
+            throw new Error("Must provide id, ids array, or filter");
+          }
+
+          const { todos, updated, count } = await bulkUpdate(selector, args.updates);
+
+          if (count === 1) {
+            const todo = updated[0];
+            const cat = todo.category && todo.subcategory
+              ? `[${todo.category}/${todo.subcategory}] `
+              : todo.category
+                ? `[${todo.category}] `
+                : "";
+            return {
+              content: [{
+                type: "text",
+                text: `Updated ${cat}"${todo.task}"`
+              }],
+            };
+          } else {
+            let text = `Updated ${count} todos:\n`;
+            updated.forEach((t, i) => {
+              const cat = t.category && t.subcategory
+                ? `[${t.category}/${t.subcategory}] `
+                : t.category
+                  ? `[${t.category}] `
+                  : "";
+              text += `${i + 1}. ${cat}${t.task}\n`;
+            });
+            return {
+              content: [{ type: "text", text }],
+            };
+          }
         }
       }
 

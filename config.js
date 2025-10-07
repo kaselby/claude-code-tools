@@ -25,6 +25,7 @@ export const COLOR_PROFILES = {
     task: "\x1b[97m",               // Bright white
     timestamp: "\x1b[90m",          // Gray
     categoryHeader: "\x1b[1m\x1b[36m", // Bold cyan
+    subcategoryHeader: "\x1b[36m",  // Cyan (not bold)
     untaggedHeader: "\x1b[90m",     // Gray
     completed: "\x1b[32m",          // Green
     empty: "\x1b[33m",              // Yellow
@@ -39,6 +40,7 @@ export const COLOR_PROFILES = {
     task: "\x1b[38;5;231m",         // White
     timestamp: "\x1b[38;5;240m",    // Dark gray
     categoryHeader: "\x1b[1m\x1b[38;5;45m", // Bold bright cyan
+    subcategoryHeader: "\x1b[38;5;51m", // Light cyan (not bold)
     untaggedHeader: "\x1b[38;5;240m", // Dark gray
     completed: "\x1b[38;5;42m",     // Sea green
     empty: "\x1b[38;5;215m",        // Peach
@@ -53,6 +55,7 @@ export const COLOR_PROFILES = {
     task: "\x1b[38;5;231m",         // White
     timestamp: "\x1b[38;5;240m",    // Dark gray
     categoryHeader: "\x1b[1m\x1b[38;5;76m", // Bold light green
+    subcategoryHeader: "\x1b[38;5;114m", // Pale green (not bold)
     untaggedHeader: "\x1b[38;5;240m", // Dark gray
     completed: "\x1b[38;5;40m",     // Bright green
     empty: "\x1b[38;5;220m",        // Gold
@@ -67,6 +70,7 @@ export const COLOR_PROFILES = {
     task: "\x1b[38;5;231m",         // White
     timestamp: "\x1b[38;5;240m",    // Dark gray
     categoryHeader: "\x1b[1m\x1b[38;5;203m", // Bold pink
+    subcategoryHeader: "\x1b[38;5;215m", // Peach (not bold)
     untaggedHeader: "\x1b[38;5;240m", // Dark gray
     completed: "\x1b[38;5;113m",    // Yellow-green
     empty: "\x1b[38;5;226m",        // Yellow
@@ -81,6 +85,7 @@ export const COLOR_PROFILES = {
     task: "\x1b[38;5;231m",         // White
     timestamp: "\x1b[38;5;240m",    // Dark gray
     categoryHeader: "\x1b[1m\x1b[38;5;141m", // Bold lavender
+    subcategoryHeader: "\x1b[38;5;183m", // Light lavender (not bold)
     untaggedHeader: "\x1b[38;5;240m", // Dark gray
     completed: "\x1b[38;5;120m",    // Light green
     empty: "\x1b[38;5;227m",        // Light yellow
@@ -95,6 +100,7 @@ export const COLOR_PROFILES = {
     task: "\x1b[97m",               // Bright white
     timestamp: "\x1b[38;5;240m",    // Dark gray
     categoryHeader: "\x1b[1m\x1b[38;5;255m", // Bold bright white
+    subcategoryHeader: "\x1b[38;5;250m", // Light gray (not bold)
     untaggedHeader: "\x1b[38;5;245m", // Medium gray
     completed: "\x1b[38;5;250m",    // Light gray
     empty: "\x1b[38;5;245m",        // Medium gray
