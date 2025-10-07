@@ -446,13 +446,11 @@ export async function bulkDelete(filter = {}) {
 
 /**
  * Format a single todo item for display
- * @param {Object} todo - Todo object (may include _index field for original index)
- * @param {number} displayIndex - 1-based index for display (fallback if _index not present)
+ * @param {Object} todo - Todo object (must include _index field)
  * @returns {string} Formatted todo line
  */
-function formatTodoItem(todo, displayIndex) {
-  // Use original index if available, otherwise use display index
-  const index = todo._index !== undefined ? todo._index : displayIndex;
+function formatTodoItem(todo) {
+  const index = todo._index;
 
   const date = new Date(todo.added);
   const dateStr = date.toLocaleDateString("en-US", {
@@ -501,9 +499,59 @@ function formatCompletedItem(todo) {
   return `\x1b[32m✓\x1b[0m ${categoryTag}\x1b[90m${todo.task}\x1b[0m\n   \x1b[90m${time}\x1b[0m`;
 }
 
+const UNTAGGED_GROUP_KEY = '__untagged__';
+
+/**
+ * Group todos by category/subcategory for display
+ * @param {Array} todos - Array of todo objects (should have _index field set)
+ * @returns {Array} Array of groups, each with categoryKey and todos array
+ */
+function groupTodosByCategory(todos) {
+  const groupMap = new Map();
+
+  // First pass: organize into groups
+  todos.forEach((todo) => {
+    let groupKey;
+    let groupLabel;
+
+    if (!todo.category) {
+      groupKey = UNTAGGED_GROUP_KEY;
+      groupLabel = null;
+    } else if (todo.subcategory) {
+      groupKey = `${todo.category}/${todo.subcategory}`;
+      groupLabel = `${todo.category}/${todo.subcategory}`;
+    } else {
+      groupKey = todo.category;
+      groupLabel = todo.category;
+    }
+
+    if (!groupMap.has(groupKey)) {
+      groupMap.set(groupKey, {
+        key: groupKey,
+        label: groupLabel,
+        todos: []
+      });
+    }
+
+    // Add todo as-is (already has _index field from caller)
+    groupMap.get(groupKey).todos.push(todo);
+  });
+
+  // Convert Map to array and sort: untagged groups last, categorized groups alphabetically
+  const groups = Array.from(groupMap.values());
+
+  groups.sort((a, b) => {
+    if (a.key === UNTAGGED_GROUP_KEY) return 1;
+    if (b.key === UNTAGGED_GROUP_KEY) return -1;
+    return a.key.localeCompare(b.key);
+  });
+
+  return groups;
+}
+
 /**
  * Format the todo list as a colored ANSI box with optional completed section
- * @param {Array} todos - Array of todo objects
+ * @param {Array} todos - Array of todo objects (must have _index field set)
  * @param {string} [categoryFilter] - Optional category filter being applied
  * @param {Array} [completed] - Optional array of completed todos to show
  * @returns {string} Formatted box with todos
@@ -524,8 +572,26 @@ export function formatTodoList(todos, categoryFilter = null, completed = null) {
       : "\x1b[33mNo active todos!\x1b[0m";
     sections.push(emptyMessage);
   } else {
-    const todoLines = todos.map((todo, i) => formatTodoItem(todo, i + 1)).join("\n");
-    sections.push(todoLines);
+    // Group todos by category
+    const groups = groupTodosByCategory(todos);
+
+    groups.forEach((group, groupIndex) => {
+      // Add separator between groups (but not before first group)
+      if (groupIndex > 0) {
+        sections.push("");
+      }
+
+      // Add group header
+      if (group.label) {
+        sections.push(`\x1b[1m\x1b[36m${group.label}\x1b[0m`); // bold cyan category header
+      } else {
+        sections.push(`\x1b[90m(untagged)\x1b[0m`); // gray untagged header
+      }
+
+      // Add todos in this group
+      const todoLines = group.todos.map(todo => formatTodoItem(todo)).join("\n");
+      sections.push(todoLines);
+    });
   }
 
   // Completed section (if provided and not empty)

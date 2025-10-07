@@ -18,7 +18,9 @@ async function main() {
   try {
     switch (command) {
       case "list": {
-        const todos = await readTodos();
+        let todos = await readTodos();
+        // Add indices BEFORE filtering
+        todos = todos.map((t, i) => ({ ...t, _index: i + 1 }));
         const history = await queryHistory();
         const category = args[0]; // Optional category filter
         const filteredTodos = category
@@ -35,7 +37,9 @@ async function main() {
           process.exit(1);
         }
 
-        const { todos, added } = await addTodo(taskString);
+        let { todos, added } = await addTodo(taskString);
+        // Add indices for display
+        todos = todos.map((t, i) => ({ ...t, _index: i + 1 }));
         const history = await queryHistory();
 
         const displayText = added.category
@@ -54,7 +58,9 @@ async function main() {
         }
 
         try {
-          const { todos, removed } = await removeTodo(index);
+          let { todos, removed } = await removeTodo(index);
+          // Add indices for display
+          todos = todos.map((t, i) => ({ ...t, _index: i + 1 }));
           const history = await queryHistory();
           console.log(`✓ Removed: "${removed.task}"`);
           console.log(formatTodoList(todos, null, history));
@@ -73,7 +79,9 @@ async function main() {
         }
 
         try {
-          const { todos, completed } = await completeTodo(index);
+          let { todos, completed } = await completeTodo(index);
+          // Add indices for display
+          todos = todos.map((t, i) => ({ ...t, _index: i + 1 }));
           const history = await queryHistory();
           const displayText = completed.category
             ? `✓ Completed [${completed.category}]: "${completed.task}"`
@@ -115,7 +123,9 @@ async function main() {
         }
 
         try {
-          const { todos, restored } = await restoreTodo(index);
+          let { todos, restored } = await restoreTodo(index);
+          // Add indices for display
+          todos = todos.map((t, i) => ({ ...t, _index: i + 1 }));
           const history = await queryHistory();
           const displayText = restored.category
             ? `✓ Restored [${restored.category}]: "${restored.task}"`
@@ -133,6 +143,7 @@ async function main() {
         const count = await clearTodos();
         const history = await queryHistory();
         console.log(`✓ All todos cleared (${count} items removed)`);
+        // Empty array already has no indices, but add for consistency
         console.log(formatTodoList([], null, history));
         break;
       }
