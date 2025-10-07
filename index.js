@@ -10,24 +10,19 @@ import {
   formatTodoList,
   addTodo,
   bulkAdd,
-  removeTodo,
   removeTodoById,
-  completeTodo,
   completeTodoById,
   clearTodos,
   filterTodos,
   getCategories,
   getStats,
-  updateTodo,
   updateTodoById,
   bulkUpdate,
   bulkDelete,
   queryHistory,
-  restoreTodo,
   restoreTodoById,
   detectProjectName,
   readTodos,
-  findTodoById,
 } from "./lib.js";
 import {
   readConfig,
@@ -52,200 +47,155 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
-        name: "add_todo",
+        name: "add_todos",
         description:
-          "Add a new item to global to-do storage with optional auto-categorization. " +
-          "All todos are stored globally in ~/.tdl/. When called from a project directory, " +
-          "automatically prepends project name unless task already has a category. " +
-          "Supports up to 3 category levels. Stay close to the user's wording. " +
+          "Add one or more todos to global storage with optional auto-categorization. " +
+          "Accepts a single task string, array of strings, or array of task objects. " +
+          "When called from a project directory, automatically prepends project name unless disabled. " +
           "Examples: " +
-          "'Add feature' → 'myproject::Add feature' (auto), " +
-          "'backend::Fix bug' → 'myproject/backend::Fix bug' (auto with 1-level), " +
-          "'otherproject/api::Task' → 'otherproject/api::Task' (explicit 2-level, no auto)",
-        inputSchema: {
-          type: "object",
-          properties: {
-            task: {
-              type: "string",
-              description: "The task to add. Format: 'category::task' or 'category/subcategory::task' (supports up to 3 levels)",
-            },
-            autoProject: {
-              type: "boolean",
-              description: "Auto-prepend current project name to untagged or 1-level tasks (default: true)",
-            },
-            projectOverride: {
-              type: "string",
-              description: "Explicit project name to use instead of auto-detection",
-            },
-          },
-          required: ["task"],
-        },
-      },
-      {
-        name: "bulk_add",
-        description:
-          "Add multiple todos at once across different projects and categories. " +
-          "Useful for adding several tasks in a single operation. " +
-          "Each task can be a string (uses default options) or an object with individual options. " +
-          "Examples: " +
-          "['computer_use/orchestration::Implement queue', 'computer_use/verifier::Validate results'], " +
-          "[{task: 'backend::Fix bug', autoProject: false}, {task: 'Add feature', projectOverride: 'myapp'}]",
+          "Single: 'Fix bug' → 'myproject::Fix bug' (auto), " +
+          "Array: ['Fix bug', 'backend::Add feature'] → ['myproject::Fix bug', 'myproject/backend::Add feature'], " +
+          "Objects: [{task: 'Fix bug', autoProject: false}, {task: 'Add test', projectOverride: 'other'}]",
         inputSchema: {
           type: "object",
           properties: {
             tasks: {
-              type: "array",
-              description: "Array of task strings or objects. Objects can have {task, autoProject, projectOverride} properties",
-              items: {
-                oneOf: [
-                  { type: "string" },
-                  {
-                    type: "object",
-                    properties: {
-                      task: { type: "string" },
-                      autoProject: { type: "boolean" },
-                      projectOverride: { type: "string" }
-                    },
-                    required: ["task"]
-                  }
-                ]
-              },
-              minItems: 1,
-            },
-            defaultOptions: {
-              type: "object",
-              description: "Default options to apply to all tasks (can be overridden per task)",
-              properties: {
-                autoProject: {
-                  type: "boolean",
-                  description: "Auto-prepend project name by default (default: true)"
-                },
-                projectOverride: {
-                  type: "string",
-                  description: "Project name to use for all tasks"
+              oneOf: [
+                { type: "string" },
+                {
+                  type: "array",
+                  items: {
+                    oneOf: [
+                      { type: "string" },
+                      {
+                        type: "object",
+                        properties: {
+                          task: { type: "string" },
+                          autoProject: { type: "boolean" },
+                          projectOverride: { type: "string" }
+                        },
+                        required: ["task"]
+                      }
+                    ]
+                  },
+                  minItems: 1,
                 }
-              }
-            }
+              ],
+              description: "Task string, array of strings, or array of task objects with {task, autoProject, projectOverride}"
+            },
+            autoProject: {
+              type: "boolean",
+              description: "Default: auto-prepend project name (default: true, applies to all tasks if not overridden)"
+            },
+            projectOverride: {
+              type: "string",
+              description: "Explicit project name to use for all tasks (unless individually overridden)"
+            },
           },
           required: ["tasks"],
         },
       },
       {
-        name: "get_todos",
+        name: "remove_todos",
         description:
-          "Get raw todo data for Claude to inspect silently. Returns JSON array of todos with optional filtering. " +
-          "All todos are stored globally. Use filters to view specific subsets. " +
-          "Use this when you need to check if tasks exist or query the list without displaying to the user.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            category: {
-              type: "string",
-              description: "Filter by first-level category (e.g., project name)",
-            },
-            subcategory: {
-              type: "string",
-              description: "Filter by second-level category (requires category to be set)",
-            },
-            untagged: {
-              type: "boolean",
-              description: "Filter for todos without a category (true/false)",
-            },
-            currentProject: {
-              type: "boolean",
-              description: "Filter by current project (auto-detected from git/directory)",
-            },
-            dateFrom: {
-              type: "string",
-              description: "Filter todos added on or after this date (ISO 8601 format: YYYY-MM-DD)",
-            },
-            dateTo: {
-              type: "string",
-              description: "Filter todos added on or before this date (ISO 8601 format: YYYY-MM-DD)",
-            },
-            searchText: {
-              type: "string",
-              description: "Filter todos containing this text (case-insensitive search)",
-            },
-          },
-        },
-      },
-      {
-        name: "display_todos",
-        description:
-          "Display a formatted, pretty-printed todo list to the user. " +
-          "Respects the configured scope setting: 'project' shows current project only, 'global' shows all. " +
-          "Use this after modifications to show the updated list, or when the user asks to see their todos.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            category: {
-              type: "string",
-              description: "Filter by specific category tag",
-            },
-            untagged: {
-              type: "boolean",
-              description: "Filter for todos without a category (true/false)",
-            },
-          },
-        },
-      },
-      {
-        name: "get_metadata",
-        description:
-          "Get metadata about todos including all unique categories and statistics. Useful for understanding what categories exist and todo distribution.",
-        inputSchema: {
-          type: "object",
-          properties: {},
-        },
-      },
-      {
-        name: "update_todo",
-        description:
-          "Update a single todo's text and/or category by its unique ID. " +
-          "Each todo has a unique UUID that never changes, making this operation unambiguous. " +
-          "Use get_todos or display_todos to find the ID of the todo you want to update.",
+          "Remove one or more todos permanently (no history). " +
+          "Accepts single ID, array of IDs, or filter criteria. " +
+          "Examples: " +
+          "Single: { id: 'uuid' }, " +
+          "Multiple: { ids: ['uuid1', 'uuid2'] }, " +
+          "Filter: { filter: { category: 'backend' } }",
         inputSchema: {
           type: "object",
           properties: {
             id: {
               type: "string",
-              description: "The unique UUID of the todo to update",
+              description: "Single todo UUID to remove"
             },
-            task: {
-              type: "string",
-              description: "New task text (optional)",
-            },
-            category: {
-              type: ["string", "null"],
-              description: "New category tag, or null to remove category (optional)",
-            },
-            subcategory: {
-              type: ["string", "null"],
-              description: "New subcategory tag, or null to remove subcategory (optional)",
-            },
-          },
-          required: ["id"],
-        },
-      },
-      {
-        name: "bulk_update",
-        description:
-          "Update multiple todos by specific IDs or filter criteria. " +
-          "Use ids array to update specific todos, or filter to match todos by criteria. " +
-          "Useful for moving todos between categories or batch editing.",
-        inputSchema: {
-          type: "object",
-          properties: {
             ids: {
               type: "array",
-              description: "Array of todo UUIDs to update (alternative to filter)",
               items: { type: "string" },
+              description: "Array of todo UUIDs to remove",
               minItems: 1,
             },
             filter: {
               type: "object",
-              description: "Filter criteria (alternative to ids): category, subcategory, untagged, currentProject, dateFrom, dateTo, searchText",
+              description: "Filter criteria: category, subcategory, untagged, currentProject, dateFrom, dateTo, searchText",
+              properties: {
+                category: { type: "string" },
+                subcategory: { type: "string" },
+                untagged: { type: "boolean" },
+                currentProject: { type: "boolean" },
+                dateFrom: { type: "string" },
+                dateTo: { type: "string" },
+                searchText: { type: "string" },
+              },
+            },
+          },
+        },
+      },
+      {
+        name: "complete_todos",
+        description:
+          "Mark one or more todos as complete (moves to history, viewable until midnight). " +
+          "Accepts single ID, array of IDs, or filter criteria. " +
+          "Examples: " +
+          "Single: { id: 'uuid' }, " +
+          "Multiple: { ids: ['uuid1', 'uuid2'] }, " +
+          "Filter: { filter: { category: 'done' } }",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: {
+              type: "string",
+              description: "Single todo UUID to complete"
+            },
+            ids: {
+              type: "array",
+              items: { type: "string" },
+              description: "Array of todo UUIDs to complete",
+              minItems: 1,
+            },
+            filter: {
+              type: "object",
+              description: "Filter criteria: category, subcategory, untagged, currentProject, dateFrom, dateTo, searchText",
+              properties: {
+                category: { type: "string" },
+                subcategory: { type: "string" },
+                untagged: { type: "boolean" },
+                currentProject: { type: "boolean" },
+                dateFrom: { type: "string" },
+                dateTo: { type: "string" },
+                searchText: { type: "string" },
+              },
+            },
+          },
+        },
+      },
+      {
+        name: "update_todos",
+        description:
+          "Update one or more todos' text and/or categories. " +
+          "Accepts single ID, array of IDs, or filter criteria, plus updates to apply. " +
+          "Examples: " +
+          "Single: { id: 'uuid', updates: { task: 'New text' } }, " +
+          "Multiple: { ids: ['uuid1', 'uuid2'], updates: { category: 'backend' } }, " +
+          "Filter: { filter: { category: 'old' }, updates: { category: 'new' } }",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: {
+              type: "string",
+              description: "Single todo UUID to update"
+            },
+            ids: {
+              type: "array",
+              items: { type: "string" },
+              description: "Array of todo UUIDs to update",
+              minItems: 1,
+            },
+            filter: {
+              type: "object",
+              description: "Filter criteria: category, subcategory, untagged, currentProject, dateFrom, dateTo, searchText",
               properties: {
                 category: { type: "string" },
                 subcategory: { type: "string" },
@@ -270,28 +220,108 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "bulk_delete",
+        name: "query_todos",
         description:
-          "Delete multiple todos by specific IDs or filter criteria. " +
-          "Use ids array to delete specific todos, or filter to match todos by criteria. " +
-          "Useful for cleaning up or removing entire categories.",
+          "Query raw todo data with optional filters and metadata. " +
+          "Returns JSON array of todos. Use includeMetadata for categories and statistics. " +
+          "Use this to silently check if tasks exist without displaying to the user.",
         inputSchema: {
           type: "object",
           properties: {
+            category: {
+              type: "string",
+              description: "Filter by first-level category (e.g., project name)",
+            },
+            subcategory: {
+              type: "string",
+              description: "Filter by second-level category",
+            },
+            untagged: {
+              type: "boolean",
+              description: "Filter for todos without a category",
+            },
+            currentProject: {
+              type: "boolean",
+              description: "Filter by current project (auto-detected)",
+            },
+            dateFrom: {
+              type: "string",
+              description: "Filter todos added on/after this date (ISO 8601: YYYY-MM-DD)",
+            },
+            dateTo: {
+              type: "string",
+              description: "Filter todos added on/before this date (ISO 8601: YYYY-MM-DD)",
+            },
+            searchText: {
+              type: "string",
+              description: "Filter todos containing this text (case-insensitive)",
+            },
+            includeMetadata: {
+              type: "boolean",
+              description: "Include categories, stats, and current project info (default: false)",
+            },
+          },
+        },
+      },
+      {
+        name: "display_todos",
+        description:
+          "Display formatted, pretty-printed todo list to the user. " +
+          "Respects scope setting: 'project' shows current project only, 'global' shows all. " +
+          "Use this after modifications to show the updated list.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            category: {
+              type: "string",
+              description: "Filter by specific category",
+            },
+            untagged: {
+              type: "boolean",
+              description: "Filter for todos without a category",
+            },
+          },
+        },
+      },
+      {
+        name: "query_history",
+        description:
+          "View completed todos from today. Respects scope setting. " +
+          "History clears automatically at midnight.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "restore_todos",
+        description:
+          "Restore one or more completed todos from history back to active list. " +
+          "Accepts single ID, array of IDs, or filter criteria. " +
+          "Examples: " +
+          "Single: { id: 'uuid' }, " +
+          "Multiple: { ids: ['uuid1', 'uuid2'] }, " +
+          "Filter: { filter: { category: 'backend' } }",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: {
+              type: "string",
+              description: "Single todo UUID to restore"
+            },
             ids: {
               type: "array",
-              description: "Array of todo UUIDs to delete (alternative to filter)",
               items: { type: "string" },
+              description: "Array of todo UUIDs to restore",
               minItems: 1,
             },
             filter: {
               type: "object",
-              description: "Filter criteria (alternative to ids): category, subcategory, untagged, currentProject, dateFrom, dateTo, searchText",
+              description: "Filter criteria: category, subcategory, untagged, dateFrom, dateTo, searchText",
               properties: {
                 category: { type: "string" },
                 subcategory: { type: "string" },
                 untagged: { type: "boolean" },
-                currentProject: { type: "boolean" },
                 dateFrom: { type: "string" },
                 dateTo: { type: "string" },
                 searchText: { type: "string" },
@@ -301,73 +331,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "remove_todo",
-        description:
-          "Remove a single todo by its unique ID. Permanently deletes without saving to history. " +
-          "Each todo has a unique UUID that never changes. " +
-          "Use get_todos or display_todos to find the ID of the todo you want to remove. " +
-          "For bulk operations, use bulk_delete instead.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            id: {
-              type: "string",
-              description: "The unique UUID of the task to remove",
-            },
-          },
-          required: ["id"],
-        },
-      },
-      {
-        name: "complete_todo",
-        description:
-          "Mark a todo as complete by its unique ID. Moves it to history where it can be viewed today and restored if needed. " +
-          "Each todo has a unique UUID that never changes. " +
-          "Use get_todos or display_todos to find the ID of the todo you want to complete. " +
-          "History clears automatically at midnight.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            id: {
-              type: "string",
-              description: "The unique UUID of the task to complete",
-            },
-          },
-          required: ["id"],
-        },
-      },
-      {
-        name: "query_history",
-        description:
-          "Query completed todos from today. Respects scope setting: shows current project or all projects. " +
-          "History automatically clears at midnight each day.",
-        inputSchema: {
-          type: "object",
-          properties: {},
-        },
-      },
-      {
-        name: "restore_todo",
-        description:
-          "Restore a completed todo from history back to the active list by its unique ID. " +
-          "Each todo has a unique UUID that never changes, even when moved to history. " +
-          "Use query_history to find the ID of the completed todo you want to restore.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            id: {
-              type: "string",
-              description: "The unique UUID of the completed task to restore",
-            },
-          },
-          required: ["id"],
-        },
-      },
-      {
         name: "clear_todos",
         description:
           "Clear all todos. Respects scope setting: clears current project only or all projects. " +
-          "Use with caution - this cannot be undone.",
+          "Use with caution - cannot be undone.",
         inputSchema: {
           type: "object",
           properties: {},
@@ -376,7 +343,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "get_config",
         description:
-          "Get current TDL configuration (color profile and scope setting). " +
+          "Get current configuration (color profile, scope setting). " +
           "Scope controls which todos are DISPLAYED, not where they're stored (all storage is global).",
         inputSchema: {
           type: "object",
@@ -385,7 +352,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "set_color_profile",
-        description: "Set the color profile for todo list display. Available profiles: default, ocean, forest, sunset, purple, monochrome",
+        description: "Set color profile for display. Profiles: default, ocean, forest, sunset, purple, monochrome",
         inputSchema: {
           type: "object",
           properties: {
@@ -401,17 +368,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "set_scope",
         description:
-          "Set the scope for todo display filtering. " +
-          "'project' shows only current project's todos (filtered view). " +
-          "'global' shows todos from all projects (unfiltered view). " +
-          "Note: All todos are stored globally in ~/.tdl/ regardless of this setting.",
+          "Set display scope. 'project' shows current project only, 'global' shows all. " +
+          "All todos stored globally in ~/.tdl/ regardless of setting.",
         inputSchema: {
           type: "object",
           properties: {
             scope: {
               type: "string",
               enum: ["project", "global"],
-              description: "Display scope: 'project' (current project only) or 'global' (all projects)",
+              description: "Display scope",
             },
           },
           required: ["scope"],
@@ -425,224 +390,240 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
-    // Get config once for all operations that need it
     const config = await readConfig();
     const filterByProject = (config.scope === "project");
 
     switch (name) {
-      case "add_todo": {
-        const { todos, added } = await addTodo(args.task, {
-          autoProject: args.autoProject !== false, // Default true
+      case "add_todos": {
+        // Handle single string, array of strings, or array of objects
+        const tasks = typeof args.tasks === 'string' ? [args.tasks] : args.tasks;
+        const defaultOptions = {
+          autoProject: args.autoProject !== false,
           projectOverride: args.projectOverride,
-        });
+        };
 
-        let displayText;
-        if (added.category && added.subcategory) {
-          displayText = `Added to-do [${added.category}/${added.subcategory}]: "${added.task}"`;
-        } else if (added.category) {
-          displayText = `Added to-do [${added.category}]: "${added.task}"`;
+        const { todos, added, count } = await bulkAdd(tasks, defaultOptions);
+
+        if (count === 1) {
+          const todo = added[0];
+          const cat = todo.category && todo.subcategory
+            ? `[${todo.category}/${todo.subcategory}] `
+            : todo.category
+              ? `[${todo.category}] `
+              : "";
+          return {
+            content: [{
+              type: "text",
+              text: `Added ${cat}"${todo.task}"\nTotal items in storage: ${todos.length}`
+            }],
+          };
         } else {
-          displayText = `Added to-do: "${added.task}"`;
+          let text = `Added ${count} todos:\n`;
+          added.forEach((t, i) => {
+            const cat = t.category && t.subcategory
+              ? `[${t.category}/${t.subcategory}] `
+              : t.category
+                ? `[${t.category}] `
+                : "";
+            text += `${i + 1}. ${cat}${t.task}\n`;
+          });
+          text += `\nTotal items in storage: ${todos.length}`;
+          return {
+            content: [{ type: "text", text }],
+          };
+        }
+      }
+
+      case "remove_todos": {
+        // Convert single id/ids/filter to unified selector
+        let selector;
+        if (args.id) {
+          selector = { ids: [args.id] };
+        } else if (args.ids) {
+          selector = { ids: args.ids };
+        } else if (args.filter) {
+          selector = { filter: args.filter };
+        } else {
+          throw new Error("Must provide id, ids array, or filter");
         }
 
-        displayText += `\nTotal items in storage: ${todos.length}`;
+        const { todos, deleted, count } = await bulkDelete(selector);
 
-        return {
-          content: [{ type: "text", text: displayText }],
-        };
+        if (count === 1) {
+          return {
+            content: [{
+              type: "text",
+              text: `Removed "${deleted[0].task}"\nRemaining items: ${todos.length}`
+            }],
+          };
+        } else {
+          let text = `Removed ${count} todos:\n`;
+          deleted.forEach((t, i) => {
+            const cat = t.category && t.subcategory
+              ? `[${t.category}/${t.subcategory}] `
+              : t.category
+                ? `[${t.category}] `
+                : "";
+            text += `${i + 1}. ${cat}${t.task}\n`;
+          });
+          text += `\nRemaining items: ${todos.length}`;
+          return {
+            content: [{ type: "text", text }],
+          };
+        }
       }
 
-      case "bulk_add": {
-        const { todos, added, count } = await bulkAdd(args.tasks, args.defaultOptions);
+      case "complete_todos": {
+        // Convert single id/ids/filter to unified operations
+        let idsToComplete;
+        if (args.id) {
+          idsToComplete = [args.id];
+        } else if (args.ids) {
+          idsToComplete = args.ids;
+        } else if (args.filter) {
+          // Get todos matching filter
+          const matchingTodos = await filterTodos(args.filter);
+          idsToComplete = matchingTodos.map(t => t.id);
+        } else {
+          throw new Error("Must provide id, ids array, or filter");
+        }
 
-        let displayText = `Added ${count} todo${count === 1 ? '' : 's'}:\n`;
-        added.forEach((todo, i) => {
-          if (todo.category && todo.subcategory) {
-            displayText += `${i + 1}. [${todo.category}/${todo.subcategory}] ${todo.task}\n`;
-          } else if (todo.category) {
-            displayText += `${i + 1}. [${todo.category}] ${todo.task}\n`;
-          } else {
-            displayText += `${i + 1}. ${todo.task}\n`;
-          }
-        });
+        if (idsToComplete.length === 0) {
+          return {
+            content: [{ type: "text", text: "No todos matched the criteria" }],
+          };
+        }
 
-        displayText += `\nTotal items in storage: ${todos.length}`;
+        // Complete each todo
+        const completed = [];
+        for (const id of idsToComplete) {
+          const result = await completeTodoById(id);
+          completed.push(result.completed);
+        }
 
-        return {
-          content: [{ type: "text", text: displayText }],
-        };
+        const todos = await readTodos();
+
+        if (completed.length === 1) {
+          const todo = completed[0];
+          const cat = todo.category && todo.subcategory
+            ? `[${todo.category}/${todo.subcategory}] `
+            : todo.category
+              ? `[${todo.category}] `
+              : "";
+          return {
+            content: [{
+              type: "text",
+              text: `✓ Completed ${cat}"${todo.task}"\nRemaining items: ${todos.length}`
+            }],
+          };
+        } else {
+          let text = `✓ Completed ${completed.length} todos:\n`;
+          completed.forEach((t, i) => {
+            const cat = t.category && t.subcategory
+              ? `[${t.category}/${t.subcategory}] `
+              : t.category
+                ? `[${t.category}] `
+                : "";
+            text += `${i + 1}. ${cat}${t.task}\n`;
+          });
+          text += `\nRemaining items: ${todos.length}`;
+          return {
+            content: [{ type: "text", text }],
+          };
+        }
       }
 
-      case "get_todos": {
-        // Return raw JSON data without formatting
+      case "update_todos": {
+        // Convert single id/ids/filter to unified selector
+        let selector;
+        if (args.id) {
+          selector = { ids: [args.id] };
+        } else if (args.ids) {
+          selector = { ids: args.ids };
+        } else if (args.filter) {
+          selector = { filter: args.filter };
+        } else {
+          throw new Error("Must provide id, ids array, or filter");
+        }
+
+        const { todos, updated, count } = await bulkUpdate(selector, args.updates);
+
+        if (count === 1) {
+          const todo = updated[0];
+          const cat = todo.category && todo.subcategory
+            ? `[${todo.category}/${todo.subcategory}] `
+            : todo.category
+              ? `[${todo.category}] `
+              : "";
+          return {
+            content: [{
+              type: "text",
+              text: `Updated ${cat}"${todo.task}"`
+            }],
+          };
+        } else {
+          let text = `Updated ${count} todos:\n`;
+          updated.forEach((t, i) => {
+            const cat = t.category && t.subcategory
+              ? `[${t.category}/${t.subcategory}] `
+              : t.category
+                ? `[${t.category}] `
+                : "";
+            text += `${i + 1}. ${cat}${t.task}\n`;
+          });
+          return {
+            content: [{ type: "text", text }],
+          };
+        }
+      }
+
+      case "query_todos": {
         const filteredTodos = await filterTodos(args || {});
 
-        return {
-          content: [
-            {
+        if (args.includeMetadata) {
+          const categories = await getCategories();
+          const stats = await getStats();
+          const projectName = await detectProjectName();
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                todos: filteredTodos,
+                metadata: {
+                  currentProject: projectName,
+                  categories,
+                  stats,
+                }
+              }, null, 2),
+            }],
+          };
+        } else {
+          return {
+            content: [{
               type: "text",
               text: JSON.stringify(filteredTodos, null, 2),
-            },
-          ],
-        };
+            }],
+          };
+        }
       }
 
       case "display_todos": {
-        // Apply scope-based filtering
-        const filterOptions = {
-          filterByProject,
-          ...args,
-        };
-
-        // Read todos with filter applied
+        const filterOptions = { filterByProject, ...args };
         const todos = await readTodos(filterOptions);
-
-        // Add indices for display
         const todosWithIndices = todos.map((t, i) => ({ ...t, _index: i + 1 }));
-
-        // Get history with same filtering
         const history = await queryHistory({ filterByProject });
 
         return {
-          content: [
-            {
-              type: "text",
-              text: await formatTodoList(
-                todosWithIndices,
-                args?.category || (args?.untagged ? "untagged" : null),
-                history,
-                { includeIdMap: true }  // Include ID mapping for Claude
-              ),
-            },
-          ],
-        };
-      }
-
-      case "get_metadata": {
-        const categories = await getCategories();
-        const stats = await getStats();
-
-        // Add current project info
-        const projectName = await detectProjectName();
-
-        const metadata = {
-          currentProject: projectName,
-          categories,
-          stats,
-        };
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(metadata, null, 2),
-            },
-          ],
-        };
-      }
-
-      case "update_todo": {
-        const { todos, updated } = await updateTodoById(
-          args.id,
-          {
-            task: args.task,
-            category: args.category,
-            subcategory: args.subcategory,
-          }
-        );
-
-        let displayText;
-        if (updated.category && updated.subcategory) {
-          displayText = `Updated to-do [${updated.category}/${updated.subcategory}]: "${updated.task}"`;
-        } else if (updated.category) {
-          displayText = `Updated to-do [${updated.category}]: "${updated.task}"`;
-        } else {
-          displayText = `Updated to-do: "${updated.task}"`;
-        }
-
-        return {
-          content: [{ type: "text", text: displayText }],
-        };
-      }
-
-      case "bulk_update": {
-        if (!args.ids && (!args.filter || Object.keys(args.filter).length === 0)) {
-          throw new Error("Must provide either ids array or non-empty filter");
-        }
-        const selector = args.ids ? { ids: args.ids } : { filter: args.filter };
-        const { todos, updated, count } = await bulkUpdate(selector, args.updates);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Updated ${count} todo(s)\n\nUpdated items:\n${updated
-                .map(
-                  (t, i) => {
-                    const cat = t.category
-                      ? t.subcategory
-                        ? `[${t.category}/${t.subcategory}] `
-                        : `[${t.category}] `
-                      : "";
-                    return `${i + 1}. ${cat}${t.task}`;
-                  }
-                )
-                .join("\n")}`,
-            },
-          ],
-        };
-      }
-
-      case "bulk_delete": {
-        if (!args.ids && (!args.filter || Object.keys(args.filter).length === 0)) {
-          throw new Error("Must provide either ids array or non-empty filter");
-        }
-        const selector = args.ids ? { ids: args.ids } : { filter: args.filter };
-        const { todos, deleted, count } = await bulkDelete(selector);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Deleted ${count} todo(s)\n\nDeleted items:\n${deleted
-                .map(
-                  (t, i) => {
-                    const cat = t.category
-                      ? t.subcategory
-                        ? `[${t.category}/${t.subcategory}] `
-                        : `[${t.category}] `
-                      : "";
-                    return `${i + 1}. ${cat}${t.task}`;
-                  }
-                )
-                .join("\n")}\n\nRemaining todos: ${todos.length}`,
-            },
-          ],
-        };
-      }
-
-      case "remove_todo": {
-        const { todos, removed } = await removeTodoById(args.id);
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Removed to-do: "${removed.task}"\nRemaining items: ${todos.length}`,
-            },
-          ],
-        };
-      }
-
-      case "complete_todo": {
-        const { todos, completed } = await completeTodoById(args.id);
-        const cat = completed.category
-          ? completed.subcategory
-            ? `[${completed.category}/${completed.subcategory}] `
-            : `[${completed.category}] `
-          : "";
-        const displayText = `✓ Completed ${cat}"${completed.task}"\nRemaining items: ${todos.length}`;
-        return {
-          content: [{ type: "text", text: displayText }],
+          content: [{
+            type: "text",
+            text: await formatTodoList(
+              todosWithIndices,
+              args?.category || (args?.untagged ? "untagged" : null),
+              history,
+              { includeIdMap: true }
+            ),
+          }],
         };
       }
 
@@ -650,19 +631,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const history = await queryHistory({ filterByProject });
         if (history.length === 0) {
           return {
-            content: [
-              { type: "text", text: "No completed todos today." },
-            ],
+            content: [{ type: "text", text: "No completed todos today." }],
           };
         }
 
         const historyText = history
           .map((t, i) => {
-            const cat = t.category
-              ? t.subcategory
-                ? `[${t.category}/${t.subcategory}] `
-                : `[${t.category}] `
-              : "";
+            const cat = t.category && t.subcategory
+              ? `[${t.category}/${t.subcategory}] `
+              : t.category
+                ? `[${t.category}] `
+                : "";
             const time = new Date(t.completedAt).toLocaleTimeString('en-US', {
               hour: '2-digit',
               minute: '2-digit'
@@ -672,38 +651,90 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           .join('\n\n');
 
         return {
-          content: [
-            {
-              type: "text",
-              text: `✓ Completed Today (${history.length}):\n\n${historyText}`,
-            },
-          ],
+          content: [{
+            type: "text",
+            text: `✓ Completed Today (${history.length}):\n\n${historyText}`,
+          }],
         };
       }
 
-      case "restore_todo": {
-        const { todos, restored } = await restoreTodoById(args.id);
-        const cat = restored.category
-          ? restored.subcategory
-            ? `[${restored.category}/${restored.subcategory}] `
-            : `[${restored.category}] `
-          : "";
-        const displayText = `Restored ${cat}"${restored.task}"\nActive items: ${todos.length}`;
-        return {
-          content: [{ type: "text", text: displayText }],
-        };
+      case "restore_todos": {
+        // Convert single id/ids/filter to unified operations
+        let idsToRestore;
+        if (args.id) {
+          idsToRestore = [args.id];
+        } else if (args.ids) {
+          idsToRestore = args.ids;
+        } else if (args.filter) {
+          // Get completed todos matching filter
+          const history = await queryHistory({ filterByProject });
+          const matchingTodos = history.filter(t => {
+            if (args.filter.category && t.category !== args.filter.category) return false;
+            if (args.filter.subcategory && t.subcategory !== args.filter.subcategory) return false;
+            if (args.filter.untagged && t.category) return false;
+            if (args.filter.searchText && !t.task.toLowerCase().includes(args.filter.searchText.toLowerCase())) return false;
+            if (args.filter.dateFrom && new Date(t.added) < new Date(args.filter.dateFrom)) return false;
+            if (args.filter.dateTo && new Date(t.added) > new Date(args.filter.dateTo)) return false;
+            return true;
+          });
+          idsToRestore = matchingTodos.map(t => t.id);
+        } else {
+          throw new Error("Must provide id, ids array, or filter");
+        }
+
+        if (idsToRestore.length === 0) {
+          return {
+            content: [{ type: "text", text: "No completed todos matched the criteria" }],
+          };
+        }
+
+        // Restore each todo
+        const restored = [];
+        for (const id of idsToRestore) {
+          const result = await restoreTodoById(id);
+          restored.push(result.restored);
+        }
+
+        const todos = await readTodos();
+
+        if (restored.length === 1) {
+          const todo = restored[0];
+          const cat = todo.category && todo.subcategory
+            ? `[${todo.category}/${todo.subcategory}] `
+            : todo.category
+              ? `[${todo.category}] `
+              : "";
+          return {
+            content: [{
+              type: "text",
+              text: `Restored ${cat}"${todo.task}"\nActive items: ${todos.length}`
+            }],
+          };
+        } else {
+          let text = `Restored ${restored.length} todos:\n`;
+          restored.forEach((t, i) => {
+            const cat = t.category && t.subcategory
+              ? `[${t.category}/${t.subcategory}] `
+              : t.category
+                ? `[${t.category}] `
+                : "";
+            text += `${i + 1}. ${cat}${t.task}\n`;
+          });
+          text += `\nActive items: ${todos.length}`;
+          return {
+            content: [{ type: "text", text }],
+          };
+        }
       }
 
       case "clear_todos": {
         const previousCount = await clearTodos({ filterByProject });
         const scope = filterByProject ? "project" : "all";
         return {
-          content: [
-            {
-              type: "text",
-              text: `Cleared ${scope} to-dos (${previousCount} items removed)`,
-            },
-          ],
+          content: [{
+            type: "text",
+            text: `Cleared ${scope} todos (${previousCount} items removed)`,
+          }],
         };
       }
 
@@ -717,32 +748,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const projectName = await detectProjectName();
 
         return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                colorProfile: config.colorProfile,
-                scope: config.scope,
-                scopeDescription: config.scope === 'project'
-                  ? `Showing todos for current project: ${projectName || '(unknown)'}`
-                  : 'Showing todos from all projects',
-                availableProfiles: profiles,
-                note: 'All todos are stored globally in ~/.tdl/. Scope controls which todos are displayed.'
-              }, null, 2),
-            },
-          ],
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              colorProfile: config.colorProfile,
+              scope: config.scope,
+              scopeDescription: config.scope === 'project'
+                ? `Showing todos for current project: ${projectName || '(unknown)'}`
+                : 'Showing todos from all projects',
+              availableProfiles: profiles,
+              note: 'All todos are stored globally in ~/.tdl/. Scope controls which todos are displayed.'
+            }, null, 2),
+          }],
         };
       }
 
       case "set_color_profile": {
         await setColorProfile(args.profile);
         return {
-          content: [
-            {
-              type: "text",
-              text: `✓ Color profile set to: ${args.profile}`,
-            },
-          ],
+          content: [{
+            type: "text",
+            text: `✓ Color profile set to: ${args.profile}`,
+          }],
         };
       }
 
@@ -750,16 +777,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         await setScope(args.scope);
         const projectName = await detectProjectName();
         return {
-          content: [
-            {
-              type: "text",
-              text: `✓ Display scope set to: ${args.scope}\n${
-                args.scope === 'global'
-                  ? 'Now showing todos from all projects'
-                  : `Now showing todos for: ${projectName || '(current project)'}`
-              }\nNote: All todos are stored globally in ~/.tdl/ regardless of this setting.`,
-            },
-          ],
+          content: [{
+            type: "text",
+            text: `✓ Display scope set to: ${args.scope}\n${
+              args.scope === 'global'
+                ? 'Now showing todos from all projects'
+                : `Now showing todos for: ${projectName || '(current project)'}`
+            }\nNote: All todos are stored globally in ~/.tdl/ regardless of this setting.`,
+          }],
         };
       }
 
@@ -768,12 +793,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
   } catch (error) {
     return {
-      content: [
-        {
-          type: "text",
-          text: `Error: ${error.message}`,
-        },
-      ],
+      content: [{
+        type: "text",
+        text: `Error: ${error.message}`,
+      }],
       isError: true,
     };
   }

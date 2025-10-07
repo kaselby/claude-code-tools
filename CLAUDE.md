@@ -104,26 +104,47 @@ The TDL tool uses a **global-only storage** architecture with smart filtering:
 
 ### MCP Tools Available
 
-The MCP server exposes these tools to Claude (prefixed with `mcp__tdl__`):
+The MCP server exposes 12 consolidated tools to Claude (prefixed with `mcp__tdl__`):
+
+**Modification Tools** (accept single ID, array of IDs, or filter criteria):
+- `add_todos` - Add one or more todos with auto-categorization
+  - Accepts: single string, array of strings, or array of objects
+  - Parameters: `tasks` (required), `autoProject` (default: true), `projectOverride` (optional)
+  - Examples: `"Fix bug"`, `["Fix bug", "Add test"]`, `[{task: "Fix bug", autoProject: false}]`
+
+- `remove_todos` - Permanently remove one or more todos (no history)
+  - Accepts: `{ id: "uuid" }`, `{ ids: ["uuid1", "uuid2"] }`, or `{ filter: {...} }`
+  - Filter by: category, subcategory, untagged, currentProject, dateFrom, dateTo, searchText
+
+- `complete_todos` - Mark one or more todos as complete (moves to history)
+  - Accepts: `{ id: "uuid" }`, `{ ids: ["uuid1", "uuid2"] }`, or `{ filter: {...} }`
+  - History viewable until midnight, then auto-clears
+
+- `update_todos` - Update one or more todos' text and/or categories
+  - Accepts: `{ id: "uuid", updates: {...} }`, `{ ids: [...], updates: {...} }`, or `{ filter: {...}, updates: {...} }`
+  - Updates: task, category, subcategory (use null to remove)
+
+- `restore_todos` - Restore one or more completed todos from history
+  - Accepts: `{ id: "uuid" }`, `{ ids: ["uuid1", "uuid2"] }`, or `{ filter: {...} }`
+  - Can filter history by category, subcategory, searchText, etc.
+
+- `clear_todos` - Clear all todos (respects scope setting)
+  - Clears current project or all projects based on scope
 
 **Query Tools**:
-- `get_todos` - Get raw JSON data for silent inspection (supports all filters: category, subcategory, currentProject, date range, text search, untagged)
-- `display_todos` - Pretty-printed formatted list for user display (respects scope setting for filtering)
-- `get_metadata` - Get categories, statistics, and current project info
-- `query_history` - View completed tasks from today (respects scope setting)
+- `query_todos` - Get raw JSON data with optional metadata
+  - All filter options: category, subcategory, untagged, currentProject, dateFrom, dateTo, searchText
+  - Set `includeMetadata: true` to include categories, stats, and current project info
+  - Use this to silently check if tasks exist without displaying to user
 
-**Modification Tools**:
-- `add_todo` - Add tasks with optional auto-project categorization
-  - Parameters: `task` (required), `autoProject` (default: true), `projectOverride` (optional)
-  - Preserves user's wording closely
-  - Auto-prepends project name for untagged or 1-level categorized tasks
-- `complete_todo` - Mark task as done and move to history (viewable until midnight)
-- `remove_todo` - Permanently delete by 1-based index (no history)
-- `update_todo` - Update task text and/or category and/or subcategory
-- `bulk_update` - Update multiple todos matching filters
-- `bulk_delete` - Delete multiple todos matching filters
-- `restore_todo` - Restore completed task from history back to active
-- `clear_todos` - Clear todos (respects scope setting: can clear current project only or all)
+- `display_todos` - Pretty-printed formatted list for user display
+  - Respects scope setting (project or global view)
+  - Includes ID mapping for Claude in HTML comment
+  - Use after modifications to show updated list
+
+- `query_history` - View completed todos from today
+  - Respects scope setting
+  - History clears automatically at midnight
 
 **Configuration Tools**:
 - `get_config` - Get current configuration (color profile, scope setting, current project)
@@ -131,9 +152,10 @@ The MCP server exposes these tools to Claude (prefixed with `mcp__tdl__`):
 - `set_scope` - Change display filter (project or global view)
 
 **Usage Patterns**:
-- Use `get_todos` to silently check if tasks exist or query the list without displaying to the user
-- Use `display_todos` after modifications to show the formatted list to the user
-- `get_todos` supports advanced filtering (date ranges, text search, currentProject), while `display_todos` respects the scope setting
+- All modification tools accept flexible parameters: single ID, array of IDs, or filter criteria
+- Use `query_todos` to silently inspect todos without displaying to user
+- Use `display_todos` after modifications to show formatted list to user
+- Filter operations work consistently across all tools
 - All todos stored globally but filtered by scope setting for display
 
 ### Auto-Categorization Behavior
@@ -159,13 +181,13 @@ The MCP server exposes these tools to Claude (prefixed with `mcp__tdl__`):
 ### History & Completion
 
 **Completion vs Removal**:
-- **Complete** (`complete_todo`): Marks task as done, moves to history for today
-- **Remove** (`remove_todo`): Permanently deletes without saving to history
+- **Complete** (`complete_todos`): Marks task(s) as done, moves to history for today
+- **Remove** (`remove_todos`): Permanently deletes without saving to history
 
 **History Features**:
 - Completed tasks stored in `~/.tdl/todos-history.json` (global)
 - View today's completed tasks with `query_history`
-- Restore accidentally completed tasks with `restore_todo`
+- Restore accidentally completed tasks with `restore_todos`
 - History automatically clears at midnight (lazy clearing on first operation of new day)
 - History respects scope setting (can view current project's completions or all)
 - Helps track progress and provides undo capability
