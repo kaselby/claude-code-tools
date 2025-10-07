@@ -288,7 +288,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: "text",
-              text: formatTodoList(
+              text: await formatTodoList(
                 filteredTodos,
                 args?.category || (args?.untagged ? "untagged" : null),
                 history

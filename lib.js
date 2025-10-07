@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import boxen from "boxen";
+import { getColorProfile } from "./config.js";
 
 const TODO_FILE = ".project-todos.json";
 const HISTORY_FILE = ".project-todos-history.json";
@@ -447,9 +448,10 @@ export async function bulkDelete(filter = {}) {
 /**
  * Format a single todo item for display
  * @param {Object} todo - Todo object (must include _index field)
+ * @param {Object} colors - Color profile to use
  * @returns {string} Formatted todo line
  */
-function formatTodoItem(todo) {
+function formatTodoItem(todo, colors) {
   const index = todo._index;
 
   const date = new Date(todo.added);
@@ -459,28 +461,27 @@ function formatTodoItem(todo) {
     hour: "2-digit",
     minute: "2-digit",
   });
-  // Bright white number with cyan background for contrast, bright white task, gray timestamp on newline
-  const cyanBg = "\x1b[46m"; // Standard cyan background (original)
 
   // Build category tag with subcategory if present
   let categoryTag = "";
   if (todo.category) {
     if (todo.subcategory) {
-      categoryTag = `\x1b[35m[${todo.category}/\x1b[36m${todo.subcategory}\x1b[35m]\x1b[0m `;
+      categoryTag = `${colors.category}[${todo.category}/${colors.subcategory}${todo.subcategory}${colors.category}]\x1b[0m `;
     } else {
-      categoryTag = `\x1b[35m[${todo.category}]\x1b[0m `;
+      categoryTag = `${colors.category}[${todo.category}]\x1b[0m `;
     }
   }
 
-  return `${cyanBg}\x1b[97m${index}.\x1b[0m ${categoryTag}\x1b[97m${todo.task}\x1b[0m\n   \x1b[90m${dateStr}\x1b[0m`;
+  return `${colors.index}${index}.\x1b[0m ${categoryTag}${colors.task}${todo.task}\x1b[0m\n   ${colors.timestamp}${dateStr}\x1b[0m`;
 }
 
 /**
  * Format a completed todo item for display
  * @param {Object} todo - Completed todo object
+ * @param {Object} colors - Color profile to use
  * @returns {string} Formatted completed todo line
  */
-function formatCompletedItem(todo) {
+function formatCompletedItem(todo, colors) {
   const time = new Date(todo.completedAt).toLocaleTimeString('en-US', {
     hour: '2-digit',
     minute: '2-digit'
@@ -490,13 +491,13 @@ function formatCompletedItem(todo) {
   let categoryTag = "";
   if (todo.category) {
     if (todo.subcategory) {
-      categoryTag = `\x1b[35m[${todo.category}/\x1b[36m${todo.subcategory}\x1b[35m]\x1b[0m `;
+      categoryTag = `${colors.category}[${todo.category}/${colors.subcategory}${todo.subcategory}${colors.category}]\x1b[0m `;
     } else {
-      categoryTag = `\x1b[35m[${todo.category}]\x1b[0m `;
+      categoryTag = `${colors.category}[${todo.category}]\x1b[0m `;
     }
   }
 
-  return `\x1b[32m✓\x1b[0m ${categoryTag}\x1b[90m${todo.task}\x1b[0m\n   \x1b[90m${time}\x1b[0m`;
+  return `${colors.completed}✓\x1b[0m ${categoryTag}${colors.timestamp}${todo.task}\x1b[0m\n   ${colors.timestamp}${time}\x1b[0m`;
 }
 
 const UNTAGGED_GROUP_KEY = '__untagged__';
@@ -554,9 +555,12 @@ function groupTodosByCategory(todos) {
  * @param {Array} todos - Array of todo objects (must have _index field set)
  * @param {string} [categoryFilter] - Optional category filter being applied
  * @param {Array} [completed] - Optional array of completed todos to show
- * @returns {string} Formatted box with todos
+ * @returns {Promise<string>} Formatted box with todos
  */
-export function formatTodoList(todos, categoryFilter = null, completed = null) {
+export async function formatTodoList(todos, categoryFilter = null, completed = null) {
+  // Load color profile from config
+  const colors = await getColorProfile();
+
   // Use fixed width that works well across different terminal sizes
   const boxWidth = 45;
 
@@ -568,8 +572,8 @@ export function formatTodoList(todos, categoryFilter = null, completed = null) {
   // Active todos section
   if (todos.length === 0) {
     const emptyMessage = categoryFilter
-      ? `\x1b[33mNo active todos in category [${categoryFilter}]\x1b[0m`
-      : "\x1b[33mNo active todos!\x1b[0m";
+      ? `${colors.empty}No active todos in category [${categoryFilter}]\x1b[0m`
+      : `${colors.empty}No active todos!\x1b[0m`;
     sections.push(emptyMessage);
   } else {
     // Group todos by category
@@ -583,13 +587,13 @@ export function formatTodoList(todos, categoryFilter = null, completed = null) {
 
       // Add group header
       if (group.label) {
-        sections.push(`\x1b[1m\x1b[36m${group.label}\x1b[0m`); // bold cyan category header
+        sections.push(`${colors.categoryHeader}${group.label}\x1b[0m`);
       } else {
-        sections.push(`\x1b[90m(untagged)\x1b[0m`); // gray untagged header
+        sections.push(`${colors.untaggedHeader}(untagged)\x1b[0m`);
       }
 
       // Add todos in this group
-      const todoLines = group.todos.map(todo => formatTodoItem(todo)).join("\n");
+      const todoLines = group.todos.map(todo => formatTodoItem(todo, colors)).join("\n");
       sections.push(todoLines);
     });
   }
@@ -597,10 +601,10 @@ export function formatTodoList(todos, categoryFilter = null, completed = null) {
   // Completed section (if provided and not empty)
   if (completed && completed.length > 0) {
     sections.push(""); // blank line separator
-    sections.push("\x1b[90m" + "─".repeat(separatorWidth) + "\x1b[0m"); // dynamic separator
-    sections.push("\x1b[32m✓ Completed Today\x1b[0m");
+    sections.push(colors.timestamp + "─".repeat(separatorWidth) + "\x1b[0m"); // dynamic separator
+    sections.push(`${colors.completed}✓ Completed Today\x1b[0m`);
     sections.push(""); // blank line
-    const completedLines = completed.map(todo => formatCompletedItem(todo)).join("\n");
+    const completedLines = completed.map(todo => formatCompletedItem(todo, colors)).join("\n");
     sections.push(completedLines);
   }
 
@@ -609,7 +613,7 @@ export function formatTodoList(todos, categoryFilter = null, completed = null) {
   const todoCount = todos.length > 0 ? `(${todos.length})` : "";
 
   const box = boxen(content, {
-    title: `\x1b[95m📋 Project To-Dos ${todoCount}${titleSuffix}\x1b[0m`,
+    title: `${colors.title}📋 Project To-Dos ${todoCount}${titleSuffix}\x1b[0m`,
     titleAlignment: "left",
     padding: 1,
     margin: 0,
@@ -617,14 +621,13 @@ export function formatTodoList(todos, categoryFilter = null, completed = null) {
     width: boxWidth,
   });
 
-  // Color all border characters medium blue-cyan
-  const blueCyan = "\x1b[38;5;38m"; // 256-color medium blue-cyan (slightly darker)
+  // Color all border characters
   return box
-    .replace(/╭/g, `${blueCyan}╭\x1b[0m`)
-    .replace(/╮/g, `${blueCyan}╮\x1b[0m`)
-    .replace(/╰/g, `${blueCyan}╰\x1b[0m`)
-    .replace(/╯/g, `${blueCyan}╯\x1b[0m`)
-    .replace(/│/g, `${blueCyan}│\x1b[0m`)
-    .replace(/─/g, `${blueCyan}─\x1b[0m`);
+    .replace(/╭/g, `${colors.border}╭\x1b[0m`)
+    .replace(/╮/g, `${colors.border}╮\x1b[0m`)
+    .replace(/╰/g, `${colors.border}╰\x1b[0m`)
+    .replace(/╯/g, `${colors.border}╯\x1b[0m`)
+    .replace(/│/g, `${colors.border}│\x1b[0m`)
+    .replace(/─/g, `${colors.border}─\x1b[0m`);
 }
 
