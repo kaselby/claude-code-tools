@@ -1182,14 +1182,16 @@ export async function formatTodoList(todos, categoryFilter = null, completed = n
     .replace(/│/g, `${colors.border}│\x1b[0m`)
     .replace(/─/g, `${colors.border}─\x1b[0m`);
 
-  // Add machine-readable ID mapping if requested
+  // Add machine-readable ID mapping as HTML comment if requested
+  // This is invisible in most markdown renderers but visible in raw output
   if (options.includeIdMap && flattenedTodos.length > 0) {
     const idMap = flattenedTodos.map(t => ({
       index: t._index,
       id: t.id
     }));
 
-    output += `\n\n<!-- ID_MAP: ${JSON.stringify(idMap)} -->`;
+    // Place at end without visible newlines - Claude can still parse it
+    output += `<!-- ID_MAP: ${JSON.stringify(idMap)} -->`;
   }
 
   return output;

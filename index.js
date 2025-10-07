@@ -753,16 +753,46 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const todosWithIndices = todos.map((t, i) => ({ ...t, _index: i + 1 }));
         const history = await queryHistory({ filterByProject });
 
+        // Apply category filter if provided
+        const category = args?.category;
+        const filteredTodos = category
+          ? todosWithIndices.filter((t) => t.category === category)
+          : todosWithIndices;
+
+        // Recalculate indices after filtering for display
+        const displayTodos = filteredTodos.map((t, i) => ({ ...t, _index: i + 1 }));
+
+        // Build ID map for Claude's use (not visible to user)
+        const idMap = displayTodos.map(t => ({
+          index: t._index,
+          id: t.id
+        }));
+
+        // Format display without ID map in the text
+        const displayText = await formatTodoList(
+          displayTodos,
+          args?.category || (args?.untagged ? "untagged" : null),
+          history,
+          { includeIdMap: false }
+        );
+
+        // Return display text and ID map as separate content blocks
+        // The ID map won't be shown to the user, only the first content block is displayed
         return {
-          content: [{
-            type: "text",
-            text: await formatTodoList(
-              todosWithIndices,
-              args?.category || (args?.untagged ? "untagged" : null),
-              history,
-              { includeIdMap: true }
-            ),
-          }],
+          content: [
+            {
+              type: "text",
+              text: displayText,
+            },
+            {
+              type: "resource",
+              resource: {
+                uri: "internal://id-map",
+                mimeType: "application/json",
+                text: JSON.stringify(idMap),
+              }
+            }
+          ],
         };
       }
 

@@ -6,9 +6,12 @@ echo "Uninstalling MCP TDL tool..."
 
 # Remove slash commands
 echo "Removing slash commands..."
+rm -f "$HOME/.claude/commands/tdl.md"
 rm -f "$HOME/.claude/commands/tdl-add.md"
-rm -f "$HOME/.claude/commands/tdl-list.md"
+rm -f "$HOME/.claude/commands/tdl-check.md"
 rm -f "$HOME/.claude/commands/tdl-remove.md"
+rm -f "$HOME/.claude/commands/tdl-history.md"
+rm -f "$HOME/.claude/commands/tdl-restore.md"
 rm -f "$HOME/.claude/commands/tdl-clear.md"
 echo "  ✓ Removed slash commands"
 
