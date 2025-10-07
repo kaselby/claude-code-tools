@@ -440,8 +440,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (args.id) {
           selector = { ids: [args.id] };
         } else if (args.ids) {
+          if (args.ids.length === 0) {
+            throw new Error("ids array cannot be empty");
+          }
           selector = { ids: args.ids };
         } else if (args.filter) {
+          if (Object.keys(args.filter).length === 0) {
+            throw new Error("filter must contain at least one criteria");
+          }
           selector = { filter: args.filter };
         } else {
           throw new Error("Must provide id, ids array, or filter");
@@ -479,8 +485,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (args.id) {
           idsToComplete = [args.id];
         } else if (args.ids) {
+          if (args.ids.length === 0) {
+            throw new Error("ids array cannot be empty");
+          }
           idsToComplete = args.ids;
         } else if (args.filter) {
+          if (Object.keys(args.filter).length === 0) {
+            throw new Error("filter must contain at least one criteria");
+          }
           // Get todos matching filter
           const matchingTodos = await filterTodos(args.filter);
           idsToComplete = matchingTodos.map(t => t.id);
@@ -539,8 +551,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (args.id) {
           selector = { ids: [args.id] };
         } else if (args.ids) {
+          if (args.ids.length === 0) {
+            throw new Error("ids array cannot be empty");
+          }
           selector = { ids: args.ids };
         } else if (args.filter) {
+          if (Object.keys(args.filter).length === 0) {
+            throw new Error("filter must contain at least one criteria");
+          }
           selector = { filter: args.filter };
         } else {
           throw new Error("Must provide id, ids array, or filter");
@@ -664,19 +682,58 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (args.id) {
           idsToRestore = [args.id];
         } else if (args.ids) {
+          if (args.ids.length === 0) {
+            throw new Error("ids array cannot be empty");
+          }
           idsToRestore = args.ids;
         } else if (args.filter) {
-          // Get completed todos matching filter
-          const history = await queryHistory({ filterByProject });
-          const matchingTodos = history.filter(t => {
-            if (args.filter.category && t.category !== args.filter.category) return false;
-            if (args.filter.subcategory && t.subcategory !== args.filter.subcategory) return false;
-            if (args.filter.untagged && t.category) return false;
-            if (args.filter.searchText && !t.task.toLowerCase().includes(args.filter.searchText.toLowerCase())) return false;
-            if (args.filter.dateFrom && new Date(t.added) < new Date(args.filter.dateFrom)) return false;
-            if (args.filter.dateTo && new Date(t.added) > new Date(args.filter.dateTo)) return false;
-            return true;
-          });
+          if (Object.keys(args.filter).length === 0) {
+            throw new Error("filter must contain at least one criteria");
+          }
+          // Get all completed todos (not filtered by project yet - we'll apply filter below)
+          const allHistory = await queryHistory({ filterByProject: false });
+
+          // Apply filters using same logic as filterTodos() in lib.js
+          // NOTE: Keep this in sync with filterTodos() implementation
+          let matchingTodos = allHistory;
+
+          // Current project filter
+          if (args.filter.currentProject) {
+            const projectName = await detectProjectName();
+            if (projectName) {
+              matchingTodos = matchingTodos.filter(t => t.category === projectName);
+            }
+          }
+
+          // Category filters
+          if (args.filter.category) {
+            matchingTodos = matchingTodos.filter(t => t.category === args.filter.category);
+          }
+          if (args.filter.subcategory) {
+            matchingTodos = matchingTodos.filter(t => t.subcategory === args.filter.subcategory);
+          }
+          if (args.filter.untagged === true) {
+            matchingTodos = matchingTodos.filter(t => !t.category);
+          }
+
+          // Date filters
+          if (args.filter.dateFrom) {
+            const fromDate = new Date(args.filter.dateFrom);
+            matchingTodos = matchingTodos.filter(t => new Date(t.added) >= fromDate);
+          }
+          if (args.filter.dateTo) {
+            const toDate = new Date(args.filter.dateTo);
+            matchingTodos = matchingTodos.filter(t => new Date(t.added) <= toDate);
+          }
+
+          // Text search
+          if (args.filter.searchText) {
+            const searchLower = args.filter.searchText.toLowerCase();
+            matchingTodos = matchingTodos.filter(t =>
+              t.task.toLowerCase().includes(searchLower)
+            );
+          }
+
           idsToRestore = matchingTodos.map(t => t.id);
         } else {
           throw new Error("Must provide id, ids array, or filter");
